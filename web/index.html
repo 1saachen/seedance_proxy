@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>火山引擎 Seedance 视频生成 API | 星辰中转站</title>
+    <meta
+      name="description"
+      content="通过星辰中转站接入火山引擎 Seedance 视频生成 API。使用业务 API Key 创建并查询异步任务，在客户工作台管理业务 Key 和查看用量。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="星辰中转站" />
+    <meta property="og:title" content="火山引擎 Seedance 视频生成 API | 星辰中转站" />
+    <meta property="og:description" content="查看 Seedance 视频接口接入流程、请求示例和任务查询方式。" />
+    <meta name="theme-color" content="#edf3fb" />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="landing">
+    <a class="skip-link" href="#main">跳到正文</a>
+    <header class="public-header page-width">
+      <a class="wordmark" href="/" aria-label="星辰中转站首页"
+        ><span class="brand-mark" aria-hidden="true">S</span><span>Seedance Relay</span></a
+      >
+      <nav class="public-nav" aria-label="主导航">
+        <a href="#quickstart">开发者文档</a>
+        <a class="button secondary" href="/console/">登录工作台</a>
+      </nav>
+    </header>
+    <main class="page-width" id="main">
+      <section class="public-hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="public-label">星辰中转站</p>
+          <h1 id="hero-title">火山引擎 Seedance 视频生成 API</h1>
+          <p class="hero-description">
+            从服务端提交视频任务，异步查询生成结果。用独立工作台管理 API Key，按月追踪项目用量。
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="/console/?mode=register">创建账号</a>
+            <a class="button secondary" href="#quickstart">查看接入示例</a>
+          </div>
+        </div>
+        <figure class="film-frame">
+          <img
+            src="/seedance-tram.webp"
+            alt="雨后的坡道上，一辆电车开向暮色中的海岸城镇"
+            width="1279"
+            height="720"
+            fetchpriority="high"
+          />
+          <figcaption>
+            <span>文生视频提示词示意</span>
+            <p>雨后蓝调时刻，镜头跟随一辆电车驶过海滨街道。</p>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="public-section" id="quickstart" aria-labelledby="quickstart-title">
+        <div class="public-section-head">
+          <h2 id="quickstart-title">接入 Seedance</h2>
+          <p>业务 API Key 只保存在你的服务器环境中。</p>
+        </div>
+        <div class="quickstart-grid">
+          <ol class="quickstart-steps">
+            <li>
+              <h3>确认可调用模型</h3>
+              <p>在工作台创建 API Key，然后请求 <code>GET /v1/models</code> 查看当前可用的模型别名。</p>
+            </li>
+            <li>
+              <h3>创建视频任务</h3>
+              <p>
+                提交文本提示词。将一次业务请求绑定一个
+                <code>Idempotency-Key</code>，遇到断线时沿用原请求体与原幂等键。
+              </p>
+            </li>
+            <li>
+              <h3>查询结果</h3>
+              <p>
+                使用创建任务时的 Key 查询
+                <code>GET /api/v3/contents/generations/tasks/{id}</code>。成功后及时保存返回的视频链接。
+              </p>
+            </li>
+          </ol>
+          <figure class="public-code">
+            <figcaption>创建文生视频任务</figcaption>
+            <pre tabindex="0"><code>curl "$BASE_URL/api/v3/contents/generations/tasks" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $REQUEST_ID" \
+  -d '{
+    "model": "doubao-seedance-2.0",
+    "content": [{"type": "text", "text": "雨后的海滨街道"}],
+    "duration": 5
+  }'</code></pre>
+          </figure>
+        </div>
+      </section>
+      <section class="public-section" aria-labelledby="faq-title">
+        <div class="public-section-head"><h2 id="faq-title">常见接入问题</h2></div>
+        <details>
+          <summary>在哪里查看调用记录？</summary>
+          <p>登录工作台，打开「用量与账单」，选择月份查看任务状态及返回的输出 Token。</p>
+        </details>
+        <details>
+          <summary>怎样添加参考素材？</summary>
+          <p>
+            开通火山素材服务后，可通过 <code>POST /api/asset/create</code> 登记公网 HTTPS
+            素材链接。对处于可用状态的素材，可使用返回的
+            <code>asset://</code> 引用提交视频任务。本地文件直传计划后续开放。
+          </p>
+        </details>
+      </section>
+    </main>
+    <footer class="public-footer page-width">
+      <span>星辰中转站</span><a href="/console/">客户工作台</a>
+    </footer>
+  </body>
+</html>
