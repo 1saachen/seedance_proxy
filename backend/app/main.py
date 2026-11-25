@@ -7,9 +7,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import httpx
 
-from . import accounts, assets, model_api, usage
+from . import accounts, assets, model_api, upload_registration, uploads, usage
 from .config import Settings
 from .db import Database
+from .upload_storage import LocalUploadStorage, UploadStorage
 
 
 ARK_ORIGIN = "https://ark.cn-beijing.volces.com"
@@ -30,6 +31,7 @@ def create_app(
     *,
     ark_transport: httpx.AsyncBaseTransport | None = None,
     ark_asset_transport: httpx.AsyncBaseTransport | None = None,
+    upload_storage: UploadStorage | None = None,
 ) -> FastAPI:
     settings = settings or Settings()
     database = Database(settings.database_path)
@@ -42,6 +44,8 @@ def create_app(
             accounts.initialize(connection)
             assets.initialize(connection)
             model_api.initialize(connection)
+            uploads.initialize(connection)
+            upload_registration.initialize(connection)
         async with httpx.AsyncClient(
             base_url=ARK_ORIGIN,
             transport=ark_transport,
@@ -57,18 +61,24 @@ def create_app(
         ) as ark_assets:
             app.state.ark = ark
             app.state.ark_assets = ark_assets
-            pending_refresh = None
-            if settings.video_poll_seconds and settings.ark_api_key and settings.ark_api_key.get_secret_value():
-                pending_refresh = asyncio.create_task(poll_videos(app, settings.video_poll_seconds))
+            upload_directory = settings.upload_directory or (settings.database_path.parent / "asset-uploads")
+            app.state.upload_storage = upload_storage if upload_storage is not None else LocalUploadStorage(upload_directory)
+            background_tasks = []
             try:
+                if settings.video_poll_seconds and settings.ark_api_key and settings.ark_api_key.get_secret_value():
+                    background_tasks.append(asyncio.create_task(poll_videos(app, settings.video_poll_seconds)))
+                if settings.upload_cleanup_seconds:
+                    background_tasks.append(asyncio.create_task(uploads.poll_cleanup(app, settings.upload_cleanup_seconds)))
                 yield
             finally:
-                if pending_refresh is not None:
-                    pending_refresh.cancel()
+                for task in background_tasks:
+                    task.cancel()
+                for task in background_tasks:
                     with suppress(asyncio.CancelledError):
-                        await pending_refresh
+                        await task
 
     app = FastAPI(title="Richi Proxy", version="0.1.0", lifespan=lifespan)
+    upload_registration.redact_source_access_log()
     app.state.settings = settings
     app.state.db = database
 
@@ -92,6 +102,8 @@ def create_app(
 
     app.include_router(accounts.router)
     app.include_router(assets.router)
+    app.include_router(uploads.router)
+    app.include_router(upload_registration.router)
     app.include_router(model_api.router)
     app.include_router(usage.router)
     return app

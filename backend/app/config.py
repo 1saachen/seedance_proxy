@@ -1,7 +1,10 @@
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .urls import is_public_https
 
 
 class Settings(BaseSettings):
@@ -19,3 +22,27 @@ class Settings(BaseSettings):
     ark_asset_access_key: SecretStr | None = None
     ark_asset_secret_key: SecretStr | None = None
     ark_asset_project: str = Field(default="default", min_length=1, max_length=64)
+    upload_directory: Path | None = None
+    upload_public_origin: str = ""
+    upload_link_ttl_seconds: int = Field(default=3600, ge=60, le=86400)
+    upload_ttl_seconds: int = Field(default=172800, ge=60, le=604800)
+    upload_cleanup_seconds: int = Field(default=60, ge=0, le=3600)
+
+    @field_validator("upload_directory", mode="before")
+    @classmethod
+    def parse_upload_directory(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("upload_public_origin")
+    @classmethod
+    def normalize_upload_origin(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        if not is_public_https(value) or "?" in value or "#" in value:
+            raise ValueError("upload public origin must be a public HTTPS origin")
+        parsed = urlsplit(value)
+        if parsed.path not in ("", "/"):
+            raise ValueError("upload public origin must have a root path")
+        host = parsed.hostname.rstrip(".")
+        return f"https://[{host}]" if ":" in host else f"https://{host}"

@@ -1,19 +1,19 @@
 import hashlib
 import hmac
-import ipaddress
 import json
 import re
 import sqlite3
 from datetime import UTC, datetime
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import upload_registration
 from .accounts import BusinessPrincipal, require_business_key
+from .urls import is_public_https
 
 
 ARK_ASSET_HOST = "ark.cn-beijing.volcengineapi.com"
@@ -21,7 +21,6 @@ ARK_ASSET_ORIGIN = f"https://{ARK_ASSET_HOST}"
 ARK_ASSET_VERSION = "2024-01-01"
 ASSET_REFERENCE = re.compile(r"asset://ast_[0-9a-f]{32}")
 UPSTREAM_RESOURCE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
-PUBLIC_HOST = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{1,62}")
 AssetType = Literal["Image", "Video", "Audio"]
 Action = Literal["CreateAssetGroup", "CreateAsset", "GetAsset"]
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
@@ -68,25 +67,6 @@ def is_asset_reference(value: str) -> bool:
     return ASSET_REFERENCE.fullmatch(value) is not None
 
 
-def is_public_https(value: str) -> bool:
-    if not value.isascii() or any(ord(char) < 33 or ord(char) == 127 for char in value) or "\\" in value:
-        return False
-    try:
-        parsed = urlsplit(value)
-        host = (parsed.hostname or "").rstrip(".").lower()
-        if parsed.scheme != "https" or parsed.username is not None or parsed.password is not None:
-            return False
-        if parsed.port not in (None, 443) or parsed.fragment:
-            return False
-        try:
-            address = ipaddress.ip_address(host)
-        except ValueError:
-            return bool(PUBLIC_HOST.fullmatch(host)) and not host.endswith((".local", ".internal", ".localhost", ".test", ".invalid"))
-        return address.is_global and not address.is_multicast and not address.is_reserved
-    except ValueError:
-        return False
-
-
 class NamedInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -108,14 +88,21 @@ class AssetCreate(NamedInput):
     groupId: str = Field(min_length=1, max_length=128)
     name: str = Field(min_length=1, max_length=64)
     assetType: AssetType
-    url: str = Field(min_length=1, max_length=4096)
+    url: str | None = Field(default=None, min_length=1, max_length=4096)
+    uploadId: str | None = Field(default=None, pattern=r"^upl_[0-9a-f]{32}$")
 
     @field_validator("url")
     @classmethod
-    def asset_url(cls, value: str) -> str:
-        if not is_public_https(value):
+    def asset_url(cls, value: str | None) -> str | None:
+        if value is not None and not is_public_https(value):
             raise ValueError("asset source must use a public HTTPS URL")
         return value
+
+    @model_validator(mode="after")
+    def one_source(self) -> "AssetCreate":
+        if (self.url is None) == (self.uploadId is None):
+            raise ValueError("provide one of url or uploadId")
+        return self
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -311,15 +298,37 @@ def list_groups(request: Request, principal: Principal, page_number: PageNumber 
     return {"groups": [_public_group(row) for row in rows]}
 
 
-@router.post("/asset/create", status_code=201)
-async def create_asset(payload: AssetCreate, request: Request, principal: Principal) -> dict:
+@router.post("/asset/create", status_code=201, responses={200: {"description": "Previously registered upload"}})
+async def create_asset(payload: AssetCreate, request: Request, response: Response, principal: Principal) -> dict:
     with request.app.state.db.connect() as connection:
         group = _group_row(connection, principal.project_id, payload.groupId)
     upstream_project = _current_project(request)
     _validate_project_mapping(group["upstream_project"], upstream_project)
-    result = await _provider_request(request, "CreateAsset", upstream_project, {
-        "GroupId": group["upstream_id"], "URL": payload.url, "Name": payload.name, "AssetType": payload.assetType,
-    })
+
+    source_url = payload.url
+    if payload.uploadId is not None:
+        with request.app.state.db.connect() as connection:
+            source = upload_registration.reserve_source(
+                connection, request.app.state.settings, request.app.state.upload_storage, principal,
+                payload.uploadId, group_id=group["id"], name=payload.name, media_type=payload.assetType,
+            )
+            if source.asset_id is not None:
+                response.status_code = 200
+                return {"asset": _public_asset(_asset_row(connection, principal.project_id, source.asset_id))}
+        source_url = source.url
+    elif upload_registration.is_temporary_source_url(source_url):
+        raise _error(422, "upload_source_requires_id", "本服务暂存文件须通过 uploadId 登记")
+
+    try:
+        result = await _provider_request(request, "CreateAsset", upstream_project, {
+            "GroupId": group["upstream_id"], "URL": source_url, "Name": payload.name, "AssetType": payload.assetType,
+        })
+    except HTTPException as error:
+        if payload.uploadId is not None and error.detail["code"] in {"asset_provider_unavailable", "asset_provider_rejected"}:
+            with request.app.state.db.connect() as connection:
+                upload_registration.release_rejected_source(connection, payload.uploadId)
+        raise
+
     asset = {
         "id": f"ast_{uuid4().hex}", "group_id": group["id"], "name": payload.name,
         "asset_type": payload.assetType, "status": "Processing", "created_at": _now(),
@@ -334,6 +343,8 @@ async def create_asset(payload: AssetCreate, request: Request, principal: Princi
                 (asset["id"], principal.project_id, group["id"], _provider_id(result, "asset-"), asset["name"],
                  asset["asset_type"], asset["status"], asset["created_at"]),
             )
+            if payload.uploadId is not None:
+                upload_registration.complete_source(connection, payload.uploadId, asset["id"])
     except sqlite3.IntegrityError as error:
         raise _provider_invalid() from error
     return {"asset": _public_asset(asset)}

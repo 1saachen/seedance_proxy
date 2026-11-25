@@ -408,13 +408,31 @@ function SetupGuide() {
     'curl "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \\',
     '  -H "Authorization: Bearer $API_KEY"',
   ].join('\n');
+  const uploadExample = [
+    'curl "$BASE_URL/api/asset-group/create" \\',
+    '  -H "Authorization: Bearer $API_KEY" \\',
+    "  -H 'Content-Type: application/json' -d '{\"name\":\"reference-demo\"}'",
+    '',
+    'curl "$BASE_URL/api/asset/upload-file" \\',
+    '  -H "Authorization: Bearer $API_KEY" \\',
+    '  -H "Idempotency-Key: $UPLOAD_REQUEST_ID" \\',
+    '  -F "file=@./reference.png;type=image/png" -F "assetType=Image"',
+    '',
+    'curl "$BASE_URL/api/asset/create" \\',
+    '  -H "Authorization: Bearer $API_KEY" \\',
+    "  -H 'Content-Type: application/json' \\",
+    '  -d "{\\"groupId\\":\\"$GROUP_ID\\",\\"uploadId\\":\\"$UPLOAD_ID\\",\\"name\\":\\"reference\\",\\"assetType\\":\\"Image\\"}"',
+    '',
+    'curl "$BASE_URL/api/asset/get?assetId=$ASSET_ID" \\',
+    '  -H "Authorization: Bearer $API_KEY"',
+  ].join('\n');
   return (
     <section className="panel" aria-labelledby="integration-heading">
       <div className="panel-head">
         <div>
           <h2 id="integration-heading">Seedance 快速接入</h2>
           <p>
-            用真实业务 Key 设置 <code>API_KEY</code>，并为每次任务设置独立的 <code>REQUEST_ID</code>。
+            用本站业务 Key 设置 <code>API_KEY</code>，并为每次任务设置独立的 <code>REQUEST_ID</code>。
           </p>
         </div>
         <a href="/#quickstart">查看接入指南</a>
@@ -425,10 +443,30 @@ function SetupGuide() {
       <p className="guide-note">
         用创建响应里的任务 ID 设置 <code>TASK_ID</code>。实际可用模型以模型列表为准。
       </p>
-      <p className="guide-note">
-        开通火山素材服务后，使用 <code>POST /api/asset-group/create</code> 创建素材组，再用{' '}
-        <code>POST /api/asset/create</code> 登记公网 HTTPS 素材链接。本地文件直传计划后续开放。
-      </p>
+      <section aria-labelledby="asset-guide-heading">
+        <h3 id="asset-guide-heading">用本地图片作为参考</h3>
+        <p className="guide-note">
+          用同一枚业务 Key 逐条运行命令。将创建素材组返回的 <code>group.id</code> 设为 <code>GROUP_ID</code>，
+          并为新文件设置独立的 <code>UPLOAD_REQUEST_ID</code>。
+        </p>
+        <p className="guide-note">
+          用上传返回的 <code>uploadId</code> 设置 <code>UPLOAD_ID</code>，再用登记返回的 <code>asset.id</code>{' '}
+          设置 <code>ASSET_ID</code>。
+        </p>
+        <pre className="console-code" tabIndex={0}>
+          <code>{uploadExample}</code>
+        </pre>
+        <p className="guide-note">
+          状态为 <code>Processing</code> 时稍后重查。变为 <code>Active</code> 后，将返回的 <code>asset.reference</code>{' '}
+          填入下面的 <code>url</code>，把该对象加到生成请求的 <code>content</code> 中。
+        </p>
+        <pre className="console-code" tabIndex={0}>
+          <code>{'{"type":"image_url","image_url":{"url":"asset://<素材 ID>"},"role":"reference_image"}'}</code>
+        </pre>
+        <p className="guide-note">
+          如果素材已有公网 HTTPS 链接，可在登记请求中填写 <code>url</code> 并省略 <code>uploadId</code>。
+        </p>
+      </section>
     </section>
   );
 }
