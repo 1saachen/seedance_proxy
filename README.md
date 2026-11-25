@@ -1,6 +1,6 @@
-# Seedance Relay
+# Richi Proxy
 
-Seedance Relay 为多个客户项目提供统一的视频生成 API。客户使用各自的业务 Key，服务端使用配置的官方 Ark Key 提交和查询任务。
+Richi Proxy 为多个客户项目提供统一的视频生成 API。客户使用各自的业务 Key，服务端使用配置的官方 Ark Key 提交和查询任务。
 
 这是独立重建版的开发起点。当前包含客户账号、业务 Key、异步 Seedance 任务、URL 素材登记和逐项目用量查询，以及客户侧概览、API 接入和用量页面。
 

@@ -1,10 +1,10 @@
 export function Wordmark() {
   return (
-    <a className="wordmark" href="/" aria-label="星辰中转站首页">
+    <a className="wordmark" href="/" aria-label="Richi Proxy 首页">
       <span className="brand-mark" aria-hidden="true">
-        S
+        R
       </span>
-      <span>Seedance Relay</span>
+      <span>Richi Proxy</span>
     </a>
   );
 }

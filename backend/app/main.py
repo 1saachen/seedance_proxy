@@ -68,7 +68,7 @@ def create_app(
                     with suppress(asyncio.CancelledError):
                         await pending_refresh
 
-    app = FastAPI(title="Seedance Relay", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Richi Proxy", version="0.1.0", lifespan=lifespan)
     app.state.settings = settings
     app.state.db = database
 
