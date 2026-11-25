@@ -9,7 +9,7 @@ import re
 import sqlite3
 import sys
 
-from . import billing
+from . import billing, statements
 from .config import Settings
 from .db import Database
 
@@ -52,10 +52,13 @@ def _parser() -> argparse.ArgumentParser:
     enabled.add_argument("--disabled", dest="enabled", action="store_false")
 
     actions.add_parser("reconcile", help="replay unrecorded or pending successful calls")
+    confirm = actions.add_parser("confirm-statement", help="finalize one past customer billing month")
+    confirm.add_argument("--project-id", required=True)
+    confirm.add_argument("--month", required=True, help="Beijing billing month in YYYY-MM")
     return parser
 
 
-def _run(args: argparse.Namespace) -> dict[str, int]:
+def _run(args: argparse.Namespace) -> dict[str, int | str]:
     path = args.database if args.database is not None else Settings().database_path
     if not path.is_file():
         raise ValueError("SQLite database does not exist. Initialize it with the Richi Proxy server first.")
@@ -72,6 +75,12 @@ def _run(args: argparse.Namespace) -> dict[str, int]:
 
     with database.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        if args.action == "confirm-statement":
+            statement = statements.confirm_statement(connection, args.project_id, args.month)
+            return {
+                "statementId": statement["id"], "month": statement["month"],
+                "status": statement["status"], "payableAmount": statement["summary"]["payableAmount"],
+            }
         if args.action == "add-price":
             version = billing.add_price(
                 connection, upstream_model=args.upstream_model, resolution=args.resolution,
@@ -90,6 +99,9 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         print(json.dumps(_run(args)))
+    except statements.StatementError as error:
+        print(f"Billing command failed ({error.code}): {error}", file=sys.stderr)
+        return 1
     except ValueError as error:
         print(f"Billing command failed: {error}", file=sys.stderr)
         return 1

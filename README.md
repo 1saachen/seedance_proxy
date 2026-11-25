@@ -159,6 +159,31 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 `add-price` 返回 `priceVersion`，`set-project-terms` 返回 `termsVersion`。追加 `--disabled` 条款可从指定时间起停用项目计费。应用启动和视频后台查单时补录遗漏的成功任务。在资料补齐后运行 `reconcile` 重查遗漏或待计价任务，返回 `processedTasks`。已计价条目保留当时的价目与折扣版本。
 
+## 月度账单
+
+账单按北京时间的任务结束月份归集，工作台的用量明细仍按任务创建月份查询。已计价任务的折后金额先按微元汇总，再对账单总额四舍五入至分。待计价记录补齐后参与归集，缺少结束时间的记录无法归入账期。
+
+本月及尚未确认的往期账单显示预估。运营确认已结束的账期后，金额、任务明细及确认时待计价数量一并冻结。同一账期重复确认会返回已有账单。确认后才补齐的用量列入来源账期之后按时间最早的开放账期，其明细保留 `sourceMonth`，标记为 `late_usage`。
+
+通过客户会话读取当前项目的账单。
+
+| 操作 | 接口 |
+| --- | --- |
+| 查询月份的预估或已确认账单 | `GET /api/customer/billing?month=YYYY-MM&page=1&pageSize=50` |
+| 按账单 ID 查询已确认明细 | `GET /api/customer/billing/{statementId}?page=1&pageSize=50` |
+| 下载已确认账单完整明细 | `GET /api/customer/billing/{statementId}/export.csv` |
+
+省略 `month` 时默认本月，分页默认每页 50 条，最多 100 条。预估的 `status` 为 `estimate`，`id` 为空。已确认的 `status` 为 `confirmed`，`id` 为账单 ID。`summary` 返回本期已计价任务数 `usageCalls`、补计任务数 `lateCalls`、待计价任务数 `pendingCalls` 和折前、折后及应付金额。明细金额和折前、折后汇总为六位小数的人民币元字符串，`summary.payableAmount` 为两位小数。CSV 使用带 BOM 的 UTF-8，导出包含所有页的已确认明细。
+
+运营在 `backend/` 目录按项目确认一个已结束的账期，`STATEMENT_MONTH` 格式为 `YYYY-MM`。
+
+```powershell
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" confirm-statement `
+  --project-id "$env:PROJECT_ID" --month "$env:STATEMENT_MONTH"
+```
+
+确认命令返回 `statementId`、`month`、`status` 和 `payableAmount`，客户可在工作台选择账期查看和下载。
+
 ## 测试与当前边界
 
 ```powershell
@@ -166,7 +191,7 @@ cd backend
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
-前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。客户用量页按北京时间的任务创建月份展示任务、上游输出用量和单次金额。月度账单、火山账单导入、Native 支付、开票和生产环境验收列入首期后续交付。
+前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。火山账单导入、税费口径、Native 支付、开票和生产环境验收列入首期后续交付。
 
 ## 许可证
 

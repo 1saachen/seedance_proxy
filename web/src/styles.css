@@ -562,6 +562,56 @@ input {
 .month-filter input {
   width: auto;
 }
+.statement-overview,
+.statement-totals,
+.statement-pages {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.65rem 1.3rem;
+}
+.statement-overview {
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.1rem 1.2rem 0.55rem;
+}
+.statement-totals dt,
+.statement-note,
+.statement-line-note,
+.statement-pages span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.statement-totals dd {
+  color: var(--navy);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.statement-payable dd {
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  overflow-wrap: anywhere;
+}
+.statement-note {
+  padding: 0 1.2rem 0.85rem;
+}
+.statement-line-note {
+  display: block;
+  font-weight: 400;
+}
+.statement-details tbody th {
+  min-width: 12rem;
+}
+.statement-details td {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.statement-pages {
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.75rem 1.2rem;
+  border-top: 1px solid var(--line);
+}
 .table-scroll {
   overflow-x: auto;
   border-top: 1px solid var(--line);
@@ -731,6 +781,11 @@ tbody th {
   }
   .panel-head {
     flex-wrap: wrap;
+  }
+  .statement-totals {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
   }
   .project-details {
     grid-template-columns: minmax(0, 1fr);

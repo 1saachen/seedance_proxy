@@ -5,7 +5,7 @@ import { Wordmark } from './wordmark.jsx';
 const sections = [
   { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
   { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
-  { id: 'billing', label: '用量与计价', mark: '≋', description: '按月查看当前项目的任务用量和单次金额。' },
+  { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和任务用量。' },
 ];
 
 const statusNames = {
@@ -34,7 +34,12 @@ const numberFormatter = new Intl.NumberFormat('zh-CN');
 
 function formatDate(value) {
   if (value == null) return '—';
-  const date = new Date(typeof value === 'number' && value < 10 ** 11 ? value * 1000 : value);
+  let timestamp = value;
+  if (typeof value === 'number' && value < 10 ** 11) timestamp = value * 1000;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    timestamp = `${value.replace(' ', 'T')}Z`;
+  }
+  const date = new Date(timestamp);
   return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date);
 }
 
@@ -476,17 +481,123 @@ function SetupGuide() {
   );
 }
 
-function Billing({ month, setMonth, maxMonth, usage }) {
+function MonthlyStatement({ month, current, onExpired }) {
+  const [page, setPage] = useState(1);
+  const summaryRef = useRef(null);
+  const load = useCallback((signal) => customerApi.billing(month, page, signal), [month, page]);
+  const statement = useRemote(load, onExpired);
+
+  function goToPage(next) {
+    setPage(next);
+    summaryRef.current?.focus();
+  }
+
+  return (
+    <div ref={summaryRef} tabIndex={-1} role="group" aria-label="月度账单明细">
+      <LoadState state={statement}>
+        {({ id, status, confirmedAt, summary, pagination, items }) => {
+          const confirmed = status === 'confirmed';
+          const csv = confirmed ? customerApi.billingExportUrl(id) : null;
+          const lastPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
+          return (
+            <>
+              <div className="statement-overview">
+                <dl className="statement-totals">
+                  <div className="statement-payable">
+                    <dt>{confirmed ? '已确认应付' : current ? '本月预估应付' : '往期预估应付'}</dt>
+                    <dd>¥{summary.payableAmount}</dd>
+                  </div>
+                  <div>
+                    <dt>本期计价任务</dt>
+                    <dd>{formatNumber(summary.usageCalls)}</dd>
+                  </div>
+                  {summary.lateCalls > 0 && (
+                    <div>
+                      <dt>补计任务</dt>
+                      <dd>{formatNumber(summary.lateCalls)}</dd>
+                    </div>
+                  )}
+                  {summary.pendingCalls > 0 && (
+                    <div>
+                      <dt>{confirmed ? '确认时待计价' : '待计价任务'}</dt>
+                      <dd>{formatNumber(summary.pendingCalls)}</dd>
+                    </div>
+                  )}
+                </dl>
+                {csv && (
+                  <a className="button secondary" href={csv} download>
+                    下载 CSV
+                  </a>
+                )}
+              </div>
+              <p className="statement-note">
+                {confirmed ? `${formatDate(confirmedAt)} 确认，金额已固定。` : '待计价任务补齐用量和价目后计入账单。'}
+              </p>
+              {items.length === 0 ? (
+                <p className="empty">该账期暂无已计价明细。</p>
+              ) : (
+                <div className="table-scroll statement-details" tabIndex={0} role="region" aria-label="账单计价明细">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th scope="col">任务 ID / 模型</th>
+                        <th scope="col">折后（元）</th>
+                        <th scope="col">来源账期 / 结束时间</th>
+                        <th scope="col">输出 Token</th>
+                        <th scope="col">单价（元／百万 Token）</th>
+                        <th scope="col">折前（元）</th>
+                        <th scope="col">应付比例</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((item) => (
+                        <tr key={item.taskId}>
+                          <th scope="row">
+                            <code>{item.taskId}</code>
+                            <small className="statement-line-note">{item.model}</small>
+                          </th>
+                          <td>{item.amount ?? '—'}</td>
+                          <td>
+                            {item.sourceMonth}{item.kind === 'late_usage' && ' · 补计'}
+                            <small className="statement-line-note">{formatDate(item.settledAt)}</small>
+                          </td>
+                          <td>{formatNumber(item.outputTokens)}</td>
+                          <td>{item.unitPrice ?? '—'}</td>
+                          <td>{item.listAmount ?? '—'}</td>
+                          <td>{item.payableBps == null ? '—' : `${item.payableBps / 100}%`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {(page > 1 || lastPage > 1) && (
+                <nav className="statement-pages" aria-label="账单明细分页">
+                  <button type="button" className="button secondary" disabled={page <= 1} onClick={() => goToPage(Math.min(page - 1, lastPage))}>
+                    上一页
+                  </button>
+                  <span role="status">第 {pagination.page} 页 / 共 {lastPage} 页</span>
+                  <button type="button" className="button secondary" disabled={page >= lastPage} onClick={() => goToPage(page + 1)}>
+                    下一页
+                  </button>
+                </nav>
+              )}
+            </>
+          );
+        }}
+      </LoadState>
+    </div>
+  );
+}
+
+function Billing({ month, setMonth, maxMonth, usage, onExpired }) {
   return (
     <>
-      <section className="panel" aria-labelledby="usage-heading">
+      <section className="panel" aria-labelledby="billing-heading">
         <div className="panel-head">
           <div>
-            <h2 id="usage-heading">用量明细</h2>
-            <p>
-              按北京时间的任务创建月份归集，最多显示最近 100
-              条任务。缺少供应商用量的记录显示为「—」。视频调用受项目每日上限约束。
-            </p>
+            <h2 id="billing-heading">月度账单</h2>
+            <p>按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。</p>
           </div>
           <label className="month-filter">
             月份
@@ -500,6 +611,18 @@ function Billing({ month, setMonth, maxMonth, usage }) {
               }}
             />
           </label>
+        </div>
+        <MonthlyStatement key={month} month={month} current={month === maxMonth} onExpired={onExpired} />
+      </section>
+      <section className="panel" aria-labelledby="usage-heading">
+        <div className="panel-head">
+          <div>
+            <h2 id="usage-heading">用量明细</h2>
+            <p>
+              按北京时间的任务创建月份归集，最多显示最近 100 条任务。
+              缺少供应商用量的记录显示为「—」。视频调用受项目每日上限约束。
+            </p>
+          </div>
         </div>
         <LoadState state={usage}>
           {({ summary, items }) => (
@@ -544,14 +667,6 @@ function Billing({ month, setMonth, maxMonth, usage }) {
             </>
           )}
         </LoadState>
-      </section>
-      <section className="panel" aria-labelledby="billing-heading">
-        <div className="panel-head">
-          <div>
-            <h2 id="billing-heading">账单进度</h2>
-            <p>月度账单、在线支付和发票将在后续开放。</p>
-          </div>
-        </div>
       </section>
     </>
   );
@@ -642,7 +757,7 @@ export function Workspace({ session, onSessionEnded }) {
           </>
         )}
         {section.id === 'billing' && (
-          <Billing month={month} setMonth={setMonth} maxMonth={maxMonth} usage={usage} />
+          <Billing month={month} setMonth={setMonth} maxMonth={maxMonth} usage={usage} onExpired={onSessionEnded} />
         )}
       </main>
     </div>

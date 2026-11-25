@@ -26,6 +26,22 @@ test('customer read requests use same-origin cookies, no browser caching and exp
   }
 });
 
+test('monthly statements are paginated same-origin reads with a scoped CSV path', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => json({ status: 'estimate' }));
+  const controller = new AbortController();
+  assert.deepEqual(await customerApi.billing('2026-11', 2, controller.signal), { status: 'estimate' });
+  const [[path, options]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  assert.equal(path, '/api/customer/billing?month=2026-11&page=2&pageSize=50');
+  assert.equal(options.credentials, 'same-origin');
+  assert.equal(options.cache, 'no-store');
+  assert.equal(options.signal, controller.signal);
+  assert.equal(options.headers.Authorization, undefined);
+  const id = `stmt_${'a'.repeat(32)}`;
+  assert.equal(customerApi.billingExportUrl(id), `/api/customer/billing/${id}/export.csv`);
+  assert.equal(customerApi.billingExportUrl('../../me'), null);
+  assert.equal(customerApi.billingExportUrl(null), null);
+});
+
 test('API Key changes and logout send CSRF and never use a bearer secret', async (t) => {
   const credential = 'fixture-only';
   const created = { key: { id: 'key_any' }, secret: 'fixture-secret' };

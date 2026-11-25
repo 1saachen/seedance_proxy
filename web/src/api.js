@@ -33,6 +33,9 @@ export const customerApi = {
   createKey: (name, csrfToken) => request('/keys', { method: 'POST', body: { name }, csrfToken }),
   revokeKey: (id, csrfToken) => request(`/keys/${encodeURIComponent(id)}`, { method: 'DELETE', csrfToken }),
   usage: (month, signal) => request(`/usage?${new URLSearchParams({ month })}`, { signal }),
+  billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
+  billingExportUrl: (id) =>
+    typeof id === 'string' && /^stmt_[0-9a-f]{32}$/.test(id) ? `${customerPath}/billing/${id}/export.csv` : null,
 };
 
 export function requestErrorMessage(error) {

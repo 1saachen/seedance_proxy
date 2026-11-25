@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import httpx
 
-from . import accounts, assets, billing, model_api, upload_registration, uploads, usage
+from . import accounts, assets, billing, customer_billing, model_api, statements, upload_registration, uploads, usage
 from .config import Settings
 from .db import Database
 from .upload_storage import LocalUploadStorage, UploadStorage
@@ -55,6 +55,7 @@ def create_app(
             assets.initialize(connection)
             model_api.initialize(connection)
             billing.initialize(connection)
+            statements.initialize(connection)
             uploads.initialize(connection)
             upload_registration.initialize(connection)
         await asyncio.to_thread(_reconcile_video_charges, database)
@@ -118,6 +119,7 @@ def create_app(
     app.include_router(upload_registration.router)
     app.include_router(model_api.router)
     app.include_router(usage.router)
+    app.include_router(customer_billing.router)
     return app
 
 
