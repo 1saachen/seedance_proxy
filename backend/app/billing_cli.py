@@ -9,7 +9,7 @@ import re
 import sqlite3
 import sys
 
-from . import billing, statements
+from . import billing, cost_reconciliation, provider_costs, statements
 from .config import Settings
 from .db import Database
 
@@ -55,14 +55,61 @@ def _parser() -> argparse.ArgumentParser:
     confirm = actions.add_parser("confirm-statement", help="finalize one past customer billing month")
     confirm.add_argument("--project-id", required=True)
     confirm.add_argument("--month", required=True, help="Beijing billing month in YYYY-MM")
+
+    importer = actions.add_parser("import-provider-bill", help="import a complete Volcengine ListBillDetail JSON export")
+    importer.add_argument("--file", type=Path, required=True)
+    importer.add_argument("--replace", action="store_true", help="activate a new revision of this complete billing snapshot")
+    report = actions.add_parser("provider-cost-report", help="report supplier costs and customer due separately")
+    report.add_argument("--confirm-usage-scope", action="store_true", help="confirm supplier and relay usage cover the same calls")
+    report.add_argument("--model-map", type=Path, help="optional JSON mapping of exact ConfigName values to upstream model IDs")
+    for action in (importer, report):
+        action.add_argument("--payer-id", required=True)
+        action.add_argument("--owner-id", required=True)
+        action.add_argument("--product", required=True)
+        action.add_argument("--month", required=True, help="provider BillPeriod in YYYY-MM")
     return parser
 
 
-def _run(args: argparse.Namespace) -> dict[str, int | str]:
+def _read_export_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        raise ValueError("could not read the selected UTF-8 JSON file") from None
+
+
+def _unique_model_map(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    mapping = dict(pairs)
+    if len(mapping) != len(pairs):
+        raise ValueError("model map contains repeated names")
+    return mapping
+
+
+def _provider_command(database: Database, args: argparse.Namespace) -> dict:
+    scope = {"payer_id": args.payer_id, "owner_id": args.owner_id, "product": args.product, "month": args.month}
+    if args.action == "import-provider-bill":
+        export = provider_costs.parse_export(_read_export_text(args.file), **scope)
+        with database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return provider_costs.import_export(connection, export, replace=args.replace)
+    model_map = None
+    if args.model_map is not None:
+        model_map = json.loads(_read_export_text(args.model_map), object_pairs_hook=_unique_model_map)
+        if not isinstance(model_map, dict):
+            raise ValueError("model map must be a JSON object")
+    with database.connect() as connection:
+        connection.execute("BEGIN")
+        return cost_reconciliation.build_report(
+            connection, **scope, confirm_usage_scope=args.confirm_usage_scope, model_map=model_map,
+        )
+
+
+def _run(args: argparse.Namespace) -> dict:
     path = args.database if args.database is not None else Settings().database_path
     if not path.is_file():
         raise ValueError("SQLite database does not exist. Initialize it with the Richi Proxy server first.")
     database = Database(path)
+    if args.action in {"import-provider-bill", "provider-cost-report"}:
+        return _provider_command(database, args)
     if args.action == "reconcile":
         after = processed = 0
         while True:
@@ -99,6 +146,9 @@ def main() -> int:
     args = _parser().parse_args()
     try:
         print(json.dumps(_run(args)))
+    except provider_costs.ProviderBillError as error:
+        print(f"Billing command failed ({error.code}): {error}", file=sys.stderr)
+        return 1
     except statements.StatementError as error:
         print(f"Billing command failed ({error.code}): {error}", file=sys.stderr)
         return 1

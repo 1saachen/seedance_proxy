@@ -21,6 +21,7 @@
 | `backend/app/usage.py` | 客户按月查询任务和真实用量 |
 | `backend/app/billing.py`、`billing_cli.py` | 生效价目、项目折扣、逐笔计价与服务端维护命令 |
 | `backend/app/statements.py`、`customer_billing.py` | 月账单预估与冻结、客户明细和 CSV 导出 |
+| `backend/app/provider_costs.py`、`cost_reconciliation.py` | 火山明细的离线导入、版本去重和运营对账 |
 | `web/` | React/Vite 公开首页及客户工作台 |
 | `backend/tests/`、`web/test/` | 后端隔离、上游契约与前端 API 测试 |
 

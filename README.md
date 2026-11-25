@@ -184,6 +184,32 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 确认命令返回 `statementId`、`month`、`status` 和 `payableAmount`，客户可在工作台选择账期查看和下载。
 
+## 火山账单导入与对账
+
+运营可离线导入火山费用中心 `ListBillDetail` 的计费项明细。准备样本时按 `PayerID`、`OwnerID`、`Product` 和 `BillPeriod` 选定范围，使用 `GroupTerm=0`、`GroupPeriod=2`、`NeedRecordNum=1`、`IgnoreZero=0`。文件为 UTF-8 编码的一页完整 JSON 响应，或包含全部响应页的 JSON 数组，每页保留 `ResponseMetadata.Action`、`Result.List` 和 `Result.Total`。 [火山账单明细接口](https://docs.volcengine.com/docs/billing-center/list-bill-detail-page-query-bill-details?lang=zh)
+
+导入核对明细的账号、产品、账务账期、人民币币种和明细 ID，并用唯一明细数核对分页完整性。带筛选降级警告的响应需要重新获取。将账单文件和导出的对账报告存放在仓库外的授权目录。控制台 CSV 和分账账单的导入待取得真实样本后另行接入。
+
+在 `backend/` 目录运行以下命令。`VOLC_BILL_JSON` 指向完整响应文件，`VOLC_BILL_MONTH` 为 `YYYY-MM` 格式的账务账期。产品编码以账单明细为准。
+
+```powershell
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" import-provider-bill `
+  --file "$env:VOLC_BILL_JSON" --payer-id "$env:VOLC_PAYER_ID" --owner-id "$env:VOLC_OWNER_ID" `
+  --product "$env:VOLC_BILL_PRODUCT" --month "$env:VOLC_BILL_MONTH"
+
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" provider-cost-report `
+  --payer-id "$env:VOLC_PAYER_ID" --owner-id "$env:VOLC_OWNER_ID" `
+  --product "$env:VOLC_BILL_PRODUCT" --month "$env:VOLC_BILL_MONTH"
+```
+
+重复导入当前有效版本的同一明细会复用该版本。对已导入范围切换到更新后的完整账单时，使用 `import-provider-bill --replace`，旧版本保留供核查。导入返回 `importId`、`rows` 和 `disposition`。
+
+报告的 `provider` 部分保留供应商原金额精度，分别汇总原价 `OriginalBillAmount`、优惠金额 `PreferentialBillAmount`、折后价 `DiscountBillAmount`、应付 `PayableAmount` 和现金支付 `PaidAmount`。代金券、抹零、信控额度退款抵扣及欠费各按原字段汇总。任一明细缺少某项支付数据时，该字段的合计保留为 `null`。现金支付、信控退款抵扣及欠费均完整时，`paymentBalanceDifference` 返回应付减去三项之和，供核对供应商金额组成。`customers` 独立汇总本站各项目在所选月份的已确认账单应付。 [账单金额说明](https://docs.volcengine.com/docs/billing-center/bill-management-1?lang=zh) · [支付字段](https://docs.volcengine.com/docs/BillingCenter/ListBill-PageQueryBill?lang=zh)
+
+核实供应商账单与本站成功任务的用量覆盖范围一致后，可在 `provider-cost-report` 加上 `--confirm-usage-scope` 做模型级 Token 核对。匹配要求供应商业务账期 `BusiPeriod` 与所选月份一致，明细为按量消费使用，`Unit` 为 `Token` 或 `Tokens`，`Count` 为非负整数。`ConfigName` 可直接匹配已知上游模型版本，也可通过 `--model-map` 提供 JSON 对象，键为账单配置名，值为已核实的上游模型版本。
+
+`usage` 返回模型用量比较和未匹配的供应商明细、本站任务及原因。只有覆盖范围明确、相关模型和用量完整时才计算 `tokenDifference`。费用中心分账可按方舟接入点或官方 API Key 资源 ID 查看聚合用量，本报告按模型核对，保留无法关联到单次视频任务的明细。 [方舟账单分账](https://docs.volcengine.com/docs/ark/practice-guidance-for-modelark-bill-split?lang=zh)
+
 ## 测试与当前边界
 
 ```powershell
@@ -191,7 +217,7 @@ cd backend
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
-前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。火山账单导入、税费口径、Native 支付、开票和生产环境验收列入首期后续交付。
+前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。真实火山账单联调、税费口径、Native 支付、开票和生产环境验收列入首期后续交付。
 
 ## 许可证
 
