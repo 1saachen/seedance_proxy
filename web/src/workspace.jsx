@@ -5,7 +5,7 @@ import { Wordmark } from './wordmark.jsx';
 const sections = [
   { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
   { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
-  { id: 'billing', label: '用量与账单', mark: '≋', description: '按月查看当前项目的生成任务和实际用量。' },
+  { id: 'billing', label: '用量与计价', mark: '≋', description: '按月查看当前项目的任务用量和单次金额。' },
 ];
 
 const statusNames = {
@@ -40,6 +40,11 @@ function formatDate(value) {
 
 function formatNumber(value) {
   return value == null ? '—' : numberFormatter.format(value);
+}
+
+function formatBillingAmount(billing) {
+  if (billing?.amount != null) return billing.amount;
+  return billing?.status === 'pending' ? '待计价' : '未计费';
 }
 
 function currentMonth() {
@@ -479,7 +484,7 @@ function Billing({ month, setMonth, maxMonth, usage }) {
           <div>
             <h2 id="usage-heading">用量明细</h2>
             <p>
-              按中国标准时间归集，最多显示最近 100
+              按北京时间的任务创建月份归集，最多显示最近 100
               条任务。缺少供应商用量的记录显示为「—」。视频调用受项目每日上限约束。
             </p>
           </div>
@@ -511,8 +516,9 @@ function Billing({ month, setMonth, maxMonth, usage }) {
                         <th scope="col">模型</th>
                         <th scope="col">状态</th>
                         <th scope="col">输出 Token</th>
+                        <th scope="col">单次金额（元）</th>
                         <th scope="col">创建时间</th>
-                        <th scope="col">结算时间</th>
+                        <th scope="col">任务结束时间</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -526,6 +532,7 @@ function Billing({ month, setMonth, maxMonth, usage }) {
                             <Status value={item.status} />
                           </td>
                           <td>{formatNumber(item.outputTokens)}</td>
+                          <td>{formatBillingAmount(item.billing)}</td>
                           <td>{formatDate(item.createdAt)}</td>
                           <td>{formatDate(item.settledAt)}</td>
                         </tr>
@@ -541,8 +548,8 @@ function Billing({ month, setMonth, maxMonth, usage }) {
       <section className="panel" aria-labelledby="billing-heading">
         <div className="panel-head">
           <div>
-            <h2 id="billing-heading">账单</h2>
-            <p>项目计价、金额账单、在线支付和发票尚未开放。</p>
+            <h2 id="billing-heading">账单进度</h2>
+            <p>月度账单、在线支付和发票将在后续开放。</p>
           </div>
         </div>
       </section>

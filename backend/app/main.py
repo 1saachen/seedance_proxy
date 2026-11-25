@@ -7,7 +7,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import httpx
 
-from . import accounts, assets, model_api, upload_registration, uploads, usage
+from . import accounts, assets, billing, model_api, upload_registration, uploads, usage
 from .config import Settings
 from .db import Database
 from .upload_storage import LocalUploadStorage, UploadStorage
@@ -17,6 +17,15 @@ ARK_ORIGIN = "https://ark.cn-beijing.volces.com"
 logger = logging.getLogger(__name__)
 
 
+def _reconcile_video_charges(database: Database) -> None:
+    try:
+        with database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            billing.reconcile_batch(connection, include_pending=False)
+    except Exception:
+        logger.error("Video charge reconciliation pass failed")
+
+
 async def poll_videos(app: FastAPI, seconds: int) -> None:
     while True:
         await asyncio.sleep(seconds)
@@ -24,6 +33,7 @@ async def poll_videos(app: FastAPI, seconds: int) -> None:
             await model_api.poll_unfinished(app)
         except Exception:
             logger.error("Video polling pass failed")
+        await asyncio.to_thread(_reconcile_video_charges, app.state.db)
 
 
 def create_app(
@@ -44,8 +54,10 @@ def create_app(
             accounts.initialize(connection)
             assets.initialize(connection)
             model_api.initialize(connection)
+            billing.initialize(connection)
             uploads.initialize(connection)
             upload_registration.initialize(connection)
+        await asyncio.to_thread(_reconcile_video_charges, database)
         async with httpx.AsyncClient(
             base_url=ARK_ORIGIN,
             transport=ark_transport,
@@ -65,7 +77,7 @@ def create_app(
             app.state.upload_storage = upload_storage if upload_storage is not None else LocalUploadStorage(upload_directory)
             background_tasks = []
             try:
-                if settings.video_poll_seconds and settings.ark_api_key and settings.ark_api_key.get_secret_value():
+                if settings.video_poll_seconds:
                     background_tasks.append(asyncio.create_task(poll_videos(app, settings.video_poll_seconds)))
                 if settings.upload_cleanup_seconds:
                     background_tasks.append(asyncio.create_task(uploads.poll_cleanup(app, settings.upload_cleanup_seconds)))

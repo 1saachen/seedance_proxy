@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 from datetime import datetime, timedelta, timezone
@@ -11,11 +12,14 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from . import billing
 from .accounts import BusinessPrincipal, require_business_key
 from .assets import is_asset_reference, is_public_https, translate_reference
+from .db import Database
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 TASKS_PATH = "/api/v3/contents/generations/tasks"
 SEEDANCE_MODELS = {
@@ -57,6 +61,7 @@ def initialize(connection: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             settled_at TEXT,
             last_polled_at TEXT,
+            upstream_model TEXT,
             UNIQUE(key_id, idempotency_key)
         );
         CREATE INDEX IF NOT EXISTS video_tasks_project_settled
@@ -66,6 +71,8 @@ def initialize(connection: sqlite3.Connection) -> None:
             ON video_tasks(COALESCE(last_polled_at, created_at), created_at, id)
             WHERE status IN ('queued', 'running') AND upstream_id IS NOT NULL;
     """)
+    if "upstream_model" not in {column[1] for column in connection.execute("PRAGMA table_info(video_tasks)")}:
+        connection.execute("ALTER TABLE video_tasks ADD COLUMN upstream_model TEXT")
 
 
 class ModelInput(BaseModel):
@@ -229,18 +236,19 @@ async def create_task(
         if existing is not None:
             return _replay(existing, fingerprint)
     headers = _ark_headers(request.app)
+    upstream_model = SEEDANCE_MODELS[payload.model][0]
     with request.app.state.db.connect() as connection:
         result = connection.execute(
             """INSERT INTO video_tasks
                 (id, project_id, key_id, idempotency_key, request_hash, model, status,
-                 requested_resolution, contains_video_input)
-                SELECT ?, ?, ?, ?, ?, ?, 'submitting', ?, ?
+                 requested_resolution, contains_video_input, upstream_model)
+                SELECT ?, ?, ?, ?, ?, ?, 'submitting', ?, ?, ?
                 WHERE (SELECT COUNT(*) FROM video_tasks WHERE project_id = ?
                        AND created_at >= DATETIME('now', '+8 hours', 'start of day', '-8 hours')) < ?
                 ON CONFLICT(key_id, idempotency_key) DO NOTHING""",
             (task_id, principal.project_id, principal.key_id, idempotency_hash, fingerprint,
              payload.model, payload.resolution, any(isinstance(item, VideoContent) for item in payload.content),
-             principal.project_id, request.app.state.settings.video_daily_limit),
+             upstream_model, principal.project_id, request.app.state.settings.video_daily_limit),
         )
         if result.rowcount == 0:
             existing = connection.execute(
@@ -258,7 +266,7 @@ async def create_task(
                 connection, principal.project_id, item[kind]["url"], media_type=ASSET_MEDIA_TYPES[kind],
                 upstream_project=request.app.state.settings.ark_asset_project,
             )
-    clean["model"] = SEEDANCE_MODELS[payload.model][0]
+    clean["model"] = upstream_model
     upstream_id = None
     status = "submission_unknown"
     try:
@@ -314,7 +322,7 @@ def _provider_result(data: dict, status: str) -> tuple[dict, int | None]:
         usage = data.get("usage")
         if isinstance(usage, dict):
             tokens = {field: usage[field] for field in ("completion_tokens", "total_tokens")
-                      if type(usage.get(field)) is int and 0 <= usage[field] <= 10**12}
+                      if type(usage.get(field)) is int and 0 <= usage[field] <= billing.MAX_TOKENS}
             if tokens:
                 result["usage"] = tokens
             return result, tokens.get("completion_tokens")
@@ -335,6 +343,12 @@ def _provider_settlement_time(data: dict, created_at: str) -> str | None:
     return updated.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _record_charge(database: Database, settled: sqlite3.Row) -> None:
+    with database.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        billing.record_task(connection, settled)
+
+
 async def _refresh_task(app: FastAPI, row: sqlite3.Row, headers: dict[str, str]) -> None:
     with app.state.db.connect() as connection:
         connection.execute("UPDATE video_tasks SET last_polled_at = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
@@ -349,14 +363,20 @@ async def _refresh_task(app: FastAPI, row: sqlite3.Row, headers: dict[str, str])
         raise _error(502, "video_status_unavailable", "Seedance task status is temporarily unavailable")
     result, output_tokens = _provider_result(data, status)
     with app.state.db.connect() as connection:
-        connection.execute(
+        settled = connection.execute(
             """UPDATE video_tasks
                SET status = ?, result_json = ?, output_tokens = ?,
                    settled_at = CASE WHEN ? THEN COALESCE(?, CURRENT_TIMESTAMP) ELSE NULL END
-               WHERE id = ? AND (status = 'queued' OR (status = 'running' AND ? <> 'queued'))""",
+               WHERE id = ? AND (status = 'queued' OR (status = 'running' AND ? <> 'queued')) RETURNING *""",
             (status, json.dumps(result), output_tokens, status in TERMINAL_STATES,
              _provider_settlement_time(data, row["created_at"]), row["id"], status),
-        )
+        ).fetchone()
+    if settled is not None and status == "succeeded":
+        try:
+            await asyncio.to_thread(_record_charge, app.state.db, settled)
+        except Exception:
+            # Settlement remains available. The billing reconciliation pass can replay it.
+            logger.warning("Could not record the charge for video task %s", row["id"])
 
 
 async def poll_unfinished(app: FastAPI) -> int:

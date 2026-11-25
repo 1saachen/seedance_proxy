@@ -19,6 +19,7 @@
 | `backend/app/model_api.py` | 模型发现、Seedance 任务提交、查单和真实用量 |
 | `backend/app/assets.py` | 素材组、URL 登记、状态查询和生成引用校验 |
 | `backend/app/usage.py` | 客户按月查询任务和真实用量 |
+| `backend/app/billing.py`、`billing_cli.py` | 生效价目、项目折扣、逐笔计价与服务端维护命令 |
 | `web/` | React/Vite 公开首页及客户工作台 |
 | `backend/tests/`、`web/test/` | 后端隔离、上游契约与前端 API 测试 |
 

@@ -133,6 +133,32 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 反向代理须将 `/api/asset/source/` 下的 `GET` 和 `HEAD` 转发给后端，并透传 `Range` 请求头。关闭该路径的代理访问日志，确保错误日志也不会写入取件令牌。应用会跳过该路径的 Uvicorn 访问日志。将暂存目录设在网站静态根目录之外，通过后端按令牌提供文件。真实方舟联调需确认公网 HTTPS 可达、素材与推理凭证对应同一项目，并取得调用授权。
 
+## 逐次用量计价
+
+成功的 Seedance 视频任务按任务 ID 归集一次，使用方舟查询响应的 `usage.completion_tokens`、实际输出分辨率（480p、720p、1080p）、提交时的确切方舟模型版本以及是否含 `video_url` 输入。方舟按实际输出分辨率和视频输入区分每百万 Token 单价，返回的 `completion_tokens` 已反映适用的最低用量。 [方舟模型价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh) · [方舟任务查询](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)
+
+项目默认未计费。按任务创建时间（UTC）匹配已生效的客户价目和项目计费条款，价目由运营录入。已开通项目的成功任务缺少真实用量、计价条件、适用价目或任务结束时间时进入待计价。项目折扣以应付比例的基点表达，`8000` 表示按原价的 80% 支付（8 折）。折前和折后金额各自四舍五入到整数微元，响应以人民币元六位小数的字符串返回。
+
+工作台通过客户会话读取 `GET /api/customer/usage?month=YYYY-MM`。`summary.pricedCalls` 为所选月份的已计价任务数。`items[].billing` 为 `null` 或计价明细，其 `status` 可为 `priced`（已计价）、`pending`（待计价）或 `unbilled`（未计费）。其他字段包括 `pendingReason`、`resolution`、`containsVideoInput`、`priceVersion`、`termsVersion`、`unitPrice`、`payableBps`、`listAmount` 和 `amount`。`unitPrice` 为人民币元／百万 Token，`listAmount` 为折前金额，`amount` 为折后金额。
+
+### 配置价目与项目折扣
+
+运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。
+
+```powershell
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" add-price `
+  --upstream-model doubao-seedance-2-5-260628 --resolution 720p --video-input no `
+  --effective-at "$env:BILLING_EFFECTIVE_AT" --yuan-per-million "$env:BILLING_RATE" `
+  --source "$env:BILLING_PRICE_SOURCE"
+
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" set-project-terms `
+  --project-id "$env:PROJECT_ID" --effective-at "$env:BILLING_EFFECTIVE_AT" --enabled --payable-bps 8000
+
+..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" reconcile
+```
+
+`add-price` 返回 `priceVersion`，`set-project-terms` 返回 `termsVersion`。追加 `--disabled` 条款可从指定时间起停用项目计费。应用启动和视频后台查单时补录遗漏的成功任务。在资料补齐后运行 `reconcile` 重查遗漏或待计价任务，返回 `processedTasks`。已计价条目保留当时的价目与折扣版本。
+
 ## 测试与当前边界
 
 ```powershell
@@ -140,7 +166,7 @@ cd backend
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
-前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。客户用量页按北京时间的任务创建月份展示已记录的任务和上游输出用量，缺失 Token 保留为空。价目、折扣结算、火山账单导入、Native 支付、开票和生产环境验收列入首期后续交付。
+前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。客户用量页按北京时间的任务创建月份展示任务、上游输出用量和单次金额。月度账单、火山账单导入、Native 支付、开票和生产环境验收列入首期后续交付。
 
 ## 许可证
 
