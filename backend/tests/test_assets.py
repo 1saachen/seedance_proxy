@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import re
 from pathlib import Path
@@ -7,6 +8,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 from pydantic import SecretStr
 
 from app.assets import ARK_ASSET_HOST, translate_reference
@@ -16,16 +18,23 @@ from app.main import create_app
 
 ASSET_GROUP_CREATE = "/api/asset-group/create"
 ASSET_GROUP_LIST = "/api/asset-group/list"
+ASSET_GROUP_GET = "/api/asset-group/get"
+ASSET_GROUP_UPDATE = "/api/asset-group/update"
+ASSET_GROUP_DELETE = "/api/asset-group/delete"
 ASSET_CREATE = "/api/asset/create"
 ASSET_GET = "/api/asset/get"
 ASSET_LIST = "/api/asset/list"
+ASSET_UPDATE = "/api/asset/update"
+ASSET_DELETE = "/api/asset/delete"
+LIVENESS_START = "/api/asset-group/liveness/start"
+LIVENESS_COMPLETE = "/api/asset-group/liveness/complete"
 ARK_PROJECT = "shared-ark-project"
 ACCESS_KEY = "example-asset-access-key"
 SECRET_KEY = "example-asset-secret-key"
 SOURCE = "https://media.example.com/reference.png?token=example-private-token"
 
 
-def _client(path: Path, handler, *, credentials: bool = True) -> TestClient:
+def _client(path: Path, handler, *, credentials: bool = True, upload_origin: str = "") -> TestClient:
     settings = Settings(
         database_path=path,
         registration_enabled=True,
@@ -34,6 +43,7 @@ def _client(path: Path, handler, *, credentials: bool = True) -> TestClient:
         ark_asset_access_key=SecretStr(ACCESS_KEY) if credentials else None,
         ark_asset_secret_key=SecretStr(SECRET_KEY) if credentials else None,
         ark_asset_project=ARK_PROJECT,
+        upload_public_origin=upload_origin,
     )
     return TestClient(create_app(settings, ark_asset_transport=httpx.MockTransport(handler)))
 
@@ -199,3 +209,222 @@ def test_create_timeout_does_not_retry_or_persist_an_unconfirmed_group(tmp_path:
         assert response.json()["detail"]["code"] == "asset_submission_unknown"
         assert attempted == ["CreateAssetGroup"]
         assert client.get(ASSET_GROUP_LIST, headers=customer).json() == {"groups": []}
+
+
+def test_manage_owned_assets_and_groups_without_exposing_provider_ids(tmp_path: Path) -> None:
+    calls = []
+    responses = iter([
+        ("CreateAssetGroup", {"Name": "Cast", "Description": "Before", "GroupType": "AIGC"}, {"Id": "group-owned"}),
+        ("GetAssetGroup", {"Id": "group-owned"}, {
+            "Id": "group-owned", "ProjectName": ARK_PROJECT, "GroupType": "AIGC", "Name": "Cast", "Description": "Before",
+        }),
+        ("UpdateAssetGroup", {"Id": "group-owned", "Name": "Cast Updated", "Description": ""}, {"Id": "group-owned"}),
+        ("CreateAsset", {"GroupId": "group-owned", "URL": SOURCE, "Name": "portrait", "AssetType": "Image"}, {"Id": "asset-image"}),
+        ("CreateAsset", {"GroupId": "group-owned", "URL": SOURCE, "Name": "voice", "AssetType": "Audio"}, {"Id": "asset-audio"}),
+        ("GetAsset", {"Id": "asset-image"}, {
+            "Id": "asset-image", "GroupId": "group-owned", "ProjectName": ARK_PROJECT, "AssetType": "Image", "Status": "Active",
+        }),
+        ("UpdateAsset", {"Id": "asset-image", "Name": "Portrait_%"}, {"Id": "asset-image"}),
+        ("DeleteAsset", {"Id": "asset-audio"}, {}),
+        ("DeleteAssetGroup", {"Id": "group-owned"}, {}),
+    ])
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        action, body, result = next(responses)
+        _assert_provider_request(request, action, body)
+        calls.append(action)
+        return httpx.Response(200, json={"Result": result})
+
+    with _client(tmp_path / "manage.sqlite", provider) as client:
+        alice, project = _project(client, "alice@example.com")
+        bob, _ = _project(client, "bob@example.com")
+        group = client.post(ASSET_GROUP_CREATE, headers=alice, json={"name": "Cast", "description": "Before"}).json()["group"]
+        group_ids = {"groupId": group["id"]}
+        assert client.get(ASSET_GROUP_GET, headers=bob, params=group_ids).status_code == 404
+        assert client.post(ASSET_GROUP_UPDATE, headers=bob, json={**group_ids, "name": "Foreign"}).status_code == 404
+        assert client.post(ASSET_GROUP_DELETE, headers=bob, json=group_ids).status_code == 404
+        assert client.post(ASSET_GROUP_UPDATE, headers=alice, json=group_ids).status_code == 422
+        assert client.get(ASSET_GROUP_GET, headers=alice, params=group_ids).json()["group"] == group
+        changed = client.post(ASSET_GROUP_UPDATE, headers=alice, json={**group_ids, "name": "Cast Updated", "description": ""})
+        assert changed.status_code == 200 and changed.json()["group"] == {**group, "name": "Cast Updated", "description": ""}
+        filters = [*group_ids.items(), ("groupId", "grp_missing"), ("name", "UpDaTeD"), ("sortOrder", "asc")]
+        assert client.get(ASSET_GROUP_LIST, headers=alice, params=filters).json()["groups"] == [changed.json()["group"]]
+        assert client.get(ASSET_GROUP_LIST, headers=bob, params=filters).json()["groups"] == []
+
+        image = client.post(ASSET_CREATE, headers=alice, json=_asset_body(group["id"])).json()["asset"]
+        audio = client.post(ASSET_CREATE, headers=alice, json={**_asset_body(group["id"]), "assetType": "Audio", "name": "voice"}).json()["asset"]
+        image_ids = {"assetId": image["id"]}
+        audio_ids = {"assetId": audio["id"]}
+        assert client.post(ASSET_UPDATE, headers=bob, json={**image_ids, "name": "Foreign"}).status_code == 404
+        assert client.post(ASSET_DELETE, headers=bob, json=image_ids).status_code == 404
+        got = client.get(ASSET_GET, headers=alice, params=image_ids).json()["asset"]
+        changed = client.post(ASSET_UPDATE, headers=alice, json={**image_ids, "name": "Portrait_%"})
+        assert changed.status_code == 200 and changed.json()["asset"] == {**got, "name": "Portrait_%"}
+        assert "asset-image" not in changed.text and SOURCE not in changed.text
+        assert client.get(ASSET_LIST, headers=alice, params=[
+            *group_ids.items(), ("name", "_%"), ("assetType", "Image"), ("status", "Active"), ("status", "Failed"),
+        ]).json()["assets"] == [changed.json()["asset"]]
+        assert client.get(ASSET_LIST, headers=alice, params={"assetType": "Audio", "status": "Processing"}).json()["assets"] == [audio]
+        assert client.post(ASSET_DELETE, headers=alice, json=audio_ids).status_code == 204
+        assert client.post(ASSET_DELETE, headers=alice, json=audio_ids).status_code == 204
+        assert client.get(ASSET_GET, headers=alice, params=audio_ids).status_code == 404
+        assert client.post(ASSET_GROUP_DELETE, headers=alice, json=group_ids).status_code == 204
+        assert client.post(ASSET_GROUP_DELETE, headers=alice, json=group_ids).status_code == 204
+        assert client.post(ASSET_DELETE, headers=alice, json=image_ids).status_code == 204
+        assert client.get(ASSET_GROUP_GET, headers=alice, params=group_ids).status_code == 404
+        assert client.get(ASSET_GET, headers=alice, params=image_ids).status_code == 404
+        assert client.get(ASSET_LIST, headers=alice).json() == {"assets": []}
+        assert client.get(ASSET_GROUP_LIST, headers=alice).json() == {"groups": []}
+        assert client.post(ASSET_CREATE, headers=alice, json=_asset_body(group["id"])).status_code == 404
+        assert client.post(ASSET_GROUP_DELETE, headers=bob, json=group_ids).status_code == 404
+        with client.app.state.db.connect() as connection:
+            with pytest.raises(HTTPException) as removed:
+                translate_reference(connection, project, got["reference"], media_type="Image", upstream_project=ARK_PROJECT)
+            assert removed.value.detail["code"] == "asset_not_found"
+            assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert calls.count("DeleteAsset") == 1 and calls.count("DeleteAssetGroup") == 1
+        assert list(responses) == []
+
+
+def test_group_delete_retries_unknown_result_and_retains_upload_records(tmp_path: Path) -> None:
+    calls = []
+    source_path = None
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        nonlocal source_path
+        action = request.url.params["Action"]
+        calls.append(action)
+        if action == "CreateAssetGroup":
+            return httpx.Response(200, json={"Result": {"Id": "group-owned"}})
+        if action == "CreateAsset":
+            source_path = httpx.URL(json.loads(request.content)["URL"]).path
+            return httpx.Response(200, json={"Result": {"Id": "asset-image"}})
+        _assert_provider_request(request, "DeleteAssetGroup", {"Id": "group-owned"})
+        if calls.count("DeleteAssetGroup") == 1:
+            return httpx.Response(403, json={"ResponseMetadata": {"Error": {"Code": "AccessDenied"}}})
+        if calls.count("DeleteAssetGroup") == 2:
+            raise httpx.ReadTimeout("provider response lost", request=request)
+        return httpx.Response(404, json={"ResponseMetadata": {"Action": "DeleteAssetGroup", "Error": {"Code": "NotFound"}}})
+
+    image = io.BytesIO()
+    Image.new("RGB", (32, 32), "purple").save(image, format="PNG")
+    with _client(tmp_path / "manage-uploads.sqlite", provider, upload_origin="https://relay.example.com") as client:
+        auth, _ = _project(client, "alice@example.com")
+        group_id = client.post(ASSET_GROUP_CREATE, headers=auth, json={"name": "Cast"}).json()["group"]["id"]
+        staged = client.post("/api/asset/upload-file", headers=auth, files={"file": ("upload.png", image.getvalue(), "image/png")})
+        assert staged.status_code == 201
+        upload_id = staged.json()["uploadId"]
+        registration_body = {"groupId": group_id, "name": "portrait", "assetType": "Image", "uploadId": upload_id}
+        registered = client.post(ASSET_CREATE, headers=auth, json=registration_body)
+        assert registered.status_code == 201
+        asset_id = registered.json()["asset"]["id"]
+        assert source_path and client.get(source_path).status_code == 200
+        deletion_body = {"groupId": group_id}
+        rejected = client.post(ASSET_GROUP_DELETE, headers=auth, json=deletion_body)
+        assert rejected.status_code == 502 and rejected.json()["detail"]["code"] == "asset_provider_rejected"
+        assert len(client.get(ASSET_GROUP_LIST, headers=auth).json()["groups"]) == 1
+        unknown = client.post(ASSET_GROUP_DELETE, headers=auth, json=deletion_body)
+        assert unknown.status_code == 502 and unknown.json()["detail"]["code"] == "asset_mutation_unknown"
+        pending = client.get(ASSET_GET, headers=auth, params={"assetId": asset_id})
+        assert pending.status_code == 409 and pending.json()["detail"]["code"] == "asset_deletion_pending"
+        assert client.get(source_path).status_code == 200
+        assert client.post(ASSET_GROUP_DELETE, headers=auth, json=deletion_body).status_code == 204
+        assert client.post(ASSET_GROUP_DELETE, headers=auth, json=deletion_body).status_code == 204
+        assert client.get(source_path).status_code == 404
+        assert client.post(ASSET_CREATE, headers=auth, json=registration_body).status_code == 404
+        assert client.get(f"/api/asset/upload-file/{upload_id}", headers=auth).status_code == 200
+        with client.app.state.db.connect() as connection:
+            registration = connection.execute("SELECT * FROM asset_upload_registrations WHERE upload_id = ?", (upload_id,)).fetchone()
+            assert registration["group_id"] == group_id and registration["asset_id"] == asset_id
+            assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert calls.count("DeleteAssetGroup") == 3
+
+
+def test_liveness_maps_only_a_provider_verified_session_to_the_creating_project_and_key(tmp_path: Path) -> None:
+    token = "synthetic-byted-token-first"
+    link = "https://ark.volcengine.com/region:cn-beijing/mobile/livenees-face-manage/authorization?pl=synthetic"
+    callback = "https://consumer.example.com/verified"
+    calls = []
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        action = request.url.params["Action"]
+        calls.append(action)
+        if action == "CreateVisualValidateSession":
+            _assert_provider_request(request, action, {"CallbackURL": callback})
+            return httpx.Response(200, json={"Result": {"H5Link": link, "BytedToken": token, "CallbackURL": callback}})
+        if action == "GetVisualValidateResult":
+            _assert_provider_request(request, action, {"BytedToken": token})
+            result = {"GroupId": "group-verified"} if calls.count(action) == 2 else {}
+            return httpx.Response(200, json={"Result": result})
+        _assert_provider_request(request, "CreateAsset", {
+            "GroupId": "group-verified", "URL": SOURCE, "Name": "portrait", "AssetType": "Image",
+        })
+        return httpx.Response(200, json={"Result": {"Id": "asset-verified"}})
+
+    with _client(tmp_path / "liveness.sqlite", provider) as client:
+        alice, project_id = _project(client, "alice@example.com")
+        csrf = client.get("/api/customer/me").json()["csrfToken"]
+        key = client.post("/api/customer/keys", headers={"X-CSRF-Token": csrf}, json={"name": "sibling"})
+        sibling = {"Authorization": f"Bearer {key.json()['secret']}"}
+        bob, _ = _project(client, "bob@example.com")
+        assert client.post(LIVENESS_START, json={"callbackUrl": callback}).status_code == 401
+        assert client.post(LIVENESS_START, headers=alice, json={"callbackUrl": "https://localhost/verify"}).status_code == 422
+        assert client.post(ASSET_GROUP_CREATE, headers=alice, json={"name": "cast", "groupType": "LivenessFace"}).status_code == 422
+        started = client.post(LIVENESS_START, headers=alice, json={"callbackUrl": callback})
+        assert started.status_code == 201 and started.headers["Cache-Control"] == "no-store"
+        assert started.json()["authorizationUrl"] == link and token not in started.text
+        session_id = started.json()["sessionId"]
+        body = {"sessionId": session_id, "bytedToken": token}
+        assert client.post(LIVENESS_COMPLETE, headers=bob, json=body).status_code == 404
+        assert client.post(LIVENESS_COMPLETE, headers=sibling, json=body).status_code == 404
+        assert client.post(LIVENESS_COMPLETE, headers=alice, json={**body, "bytedToken": "wrong-token"}).status_code == 404
+        assert client.post(LIVENESS_COMPLETE, headers=alice, json={**body, "resultCode": 10000}).status_code == 422
+        assert calls == ["CreateVisualValidateSession"]
+        unconfirmed = client.post(LIVENESS_COMPLETE, headers=alice, json=body)
+        assert unconfirmed.status_code == 409 and unconfirmed.json()["detail"]["code"] == "asset_liveness_unconfirmed"
+        confirmed = client.post(LIVENESS_COMPLETE, headers=alice, json=body)
+        assert confirmed.status_code == 200 and "group-verified" not in confirmed.text
+        group = confirmed.json()["group"]
+        assert group["groupType"] == "LivenessFace" and group["id"].startswith("grp_")
+        assert client.post(LIVENESS_COMPLETE, headers=alice, json=body).json() == confirmed.json()
+        assert client.get(ASSET_GROUP_LIST, headers=alice, params={"groupType": "LivenessFace"}).json() == {"groups": [group]}
+        assert client.get(ASSET_GROUP_LIST, headers=alice, params={"groupType": "AIGC"}).json() == {"groups": []}
+        assert client.post(ASSET_CREATE, headers=bob, json=_asset_body(group["id"])).status_code == 404
+        asset = client.post(ASSET_CREATE, headers=alice, json=_asset_body(group["id"]))
+        assert asset.status_code == 201
+        assert client.get(ASSET_LIST, headers=alice, params={"groupType": "LivenessFace"}).json() == {"assets": [asset.json()["asset"]]}
+        with client.app.state.db.connect() as connection:
+            stored = connection.execute("SELECT * FROM asset_liveness_sessions WHERE id = ?", (session_id,)).fetchone()
+            assert stored["project_id"] == project_id and stored["group_id"] == group["id"]
+            assert stored["token_hash"] == hashlib.sha256(token.encode("ascii")).hexdigest()
+            assert token not in tuple(stored) and link not in tuple(stored) and callback not in tuple(stored)
+            assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert calls == ["CreateVisualValidateSession", "GetVisualValidateResult", "GetVisualValidateResult", "CreateAsset"]
+
+
+def test_liveness_rejects_ambiguous_callback_non_provider_links_and_expired_tokens(tmp_path: Path) -> None:
+    calls = []
+    token = "synthetic-expiring-token"
+    callback = "https://consumer.example.com/verified"
+    provider_path = "/region:cn-beijing/mobile/livenees-face-manage/authorization?pl=synthetic"
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        _assert_provider_request(request, "CreateVisualValidateSession", {"CallbackURL": callback})
+        calls.append(request.url.params["Action"])
+        host = "ark.volcengine.com.phishing.example.com" if len(calls) == 1 else "ark.volcengine.com"
+        return httpx.Response(200, json={"Result": {"H5Link": f"https://{host}{provider_path}", "BytedToken": token}})
+
+    with _client(tmp_path / "liveness-expired.sqlite", provider) as client:
+        auth, _ = _project(client, "alice@example.com")
+        assert client.post(LIVENESS_START, headers=auth, json={"callbackUrl": f"{callback}?bytedToken=spoof"}).status_code == 422
+        suspect = client.post(LIVENESS_START, headers=auth, json={"callbackUrl": callback})
+        assert suspect.status_code == 502 and "phishing.example.com" not in suspect.text
+        started = client.post(LIVENESS_START, headers=auth, json={"callbackUrl": callback})
+        assert started.status_code == 201
+        session_id = started.json()["sessionId"]
+        with client.app.state.db.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM asset_liveness_sessions").fetchone()[0] == 1
+            connection.execute("UPDATE asset_liveness_sessions SET expires_at = 0 WHERE id = ?", (session_id,))
+        expired = client.post(LIVENESS_COMPLETE, headers=auth, json={"sessionId": session_id, "bytedToken": token})
+        assert expired.status_code == 409 and expired.json()["detail"]["code"] == "asset_liveness_expired"
+        assert calls == ["CreateVisualValidateSession", "CreateVisualValidateSession"]

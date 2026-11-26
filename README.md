@@ -26,7 +26,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-通过前端控制台打印的本地地址访问，客户工作台入口为 `/console/`。开发服务器将 API 请求代理到本地后端。公开部署前应启用 HTTPS 和 Secure Cookie，并控制客户开通流程。注册默认关闭。
+通过前端控制台打印的本地地址访问，客户工作台入口为 `/console/`，开发者手册入口为 `/docs/`。开发服务器将 API 请求代理到本地后端。公开部署前应启用 HTTPS 和 Secure Cookie，并控制客户开通流程。注册默认关闭。
 
 ## 工作台视频体验和任务记录
 
@@ -38,18 +38,25 @@ pnpm dev
 
 客户账号密码长度为 8 至 128 个字符。客户登录后可领取或撤销站内业务 Key。凭证只在创建时返回完整值。调用下列接口使用 `Authorization: Bearer <业务 Key>`。
 
+完整参数、请求示例、错误处理和回调验签见[开发者手册](web/docs/index.html)。
+
 | 能力 | 接口 |
 | --- | --- |
 | 已启用视频模型 | `GET /v1/models` |
 | 提交 Seedance 视频任务 | `POST /api/v3/contents/generations/tasks` |
 | 查询任务和实际输出 Token | `GET /api/v3/contents/generations/tasks/{id}` |
+| 列出任务、取消排队任务或删除查询记录 | `GET /api/v3/contents/generations/tasks`、`DELETE /api/v3/contents/generations/tasks/{id}` |
 | 创建与列出本项目素材组 | `POST /api/asset-group/create` 和 `GET /api/asset-group/list` |
+| 查看、更新与删除素材组 | `GET /api/asset-group/get`、`POST /api/asset-group/update`、`POST /api/asset-group/delete` |
 | 上传本地素材到服务器暂存 | `POST /api/asset/upload-file` |
 | 查询本业务 Key 的上传状态 | `GET /api/asset/upload-file/{uploadId}` |
 | 登记暂存素材或公网 HTTPS 素材 | `POST /api/asset/create` |
 | 列出素材与查询处理状态 | `GET /api/asset/list` 和 `GET /api/asset/get?assetId=...` |
+| 更新与删除素材 | `POST /api/asset/update`、`POST /api/asset/delete` |
+| 预置素材目录 | `GET /api/asset/presets` |
+| 开始与完成真人素材授权 | `POST /api/asset-group/liveness/start`、`POST /api/asset-group/liveness/complete` |
 
-提交后使用同一业务 Key 查询本站任务 ID。提交时建议提供 `Idempotency-Key`，使用同一个键重试同一请求体。上游结果 URL 可能过期。每日提交次数由项目共享，默认每个项目 5 次。配置官方 Ark Key 后，应用可后台补查正在排队或运行且已知上游 ID 的任务。
+提交后使用同一业务 Key 查询本站任务 ID。提交时建议提供 `Idempotency-Key`，使用同一个键重试同一请求体。方舟结果 URL 有效期为 24 小时。每日提交次数由项目共享，默认每个项目 5 次。配置官方 Ark Key 后，应用可后台补查正在排队或运行且已知上游 ID 的任务。列表读取本站已记录的状态。删除历史记录后，原用量和账单数据仍可核对。
 
 下列模型支持标准视频创建和查询。通过 `GET /v1/models` 获取当前可用的业务别名和参数限制。 [方舟模型能力对比](https://docs.volcengine.com/docs/ark/video-generation-tutorial?lang=zh)
 
@@ -61,13 +68,19 @@ pnpm dev
 | `doubao-seedance-2.0-fast` | `doubao-seedance-2-0-fast-260128` | 4–15 秒 | 480p、720p |
 | `doubao-seedance-2.0-mini` | `doubao-seedance-2-0-mini-260615` | 4–15 秒 | 480p、720p |
 
-`GET /v1/models` 的 `data[].id` 用于提交任务。`data[].video` 提供 `max_duration`（秒）、`resolutions`、`audio_only` 和 `max_reference_images`、`max_reference_videos`、`max_reference_audios`。`frame_ratio_adaptive` 为 `true` 时，首帧或首尾帧生成只接受省略 `ratio` 或设为 `adaptive`。单独输入参考音频适用于 2.5 和 2.5 Flash。2.0 系列使用参考音频时要一起提供参考图片或视频。API 也可将 `duration` 设为 `-1` 交由方舟选择时长。Draft、视频编辑、视频延长和取消接口仍待接入。
+`GET /v1/models` 的 `data[].id` 用于提交任务，`data[].video` 指定时长、输出分辨率及参考素材限制。API 支持首帧和首尾帧、全模态参考、视频编辑和延长、联网搜索、尾帧输出及状态回调，标准版 2.5 还支持 Draft 样片转成片。2.5 系列可直接使用音频作为唯一参考素材。2.0 系列使用参考音频时要同时提供参考图片或视频。通过 `duration: -1` 可让方舟选择时长。
+
+生成请求的 JSON 上限为 64 MiB。图片和音频可以用 Base64 Data URL 传入，也可以传公网 HTTPS 地址和已登记素材引用。运行在网关后面时，创建视频任务的请求体上限要允许 64 MiB。
 
 标准版的 4K 请求使用 `"resolution": "4k"`，实际分辨率由任务查询返回。方舟 4K 视频使用 10 位 H.265（HEVC）编码。浏览器无法预览时，可以下载后用兼容的本地播放器打开。 [方舟创建视频任务](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)
 
 本地开发可以在不配置官方凭证的情况下验证注册、业务 Key 和客户页面。配置服务器环境变量 `SEEDANCE_ARK_API_KEY` 后，视频请求会发往火山并可能产生费用。自动测试使用 `MockTransport` 和临时 SQLite。
 
 素材登记需配置服务端资产 AK/SK 与共享的火山项目名。视频推理凭证的火山项目需与素材项目匹配。
+
+设置 `SEEDANCE_VIDEO_CALLBACK_POLL_SECONDS` 配置状态回调投递的检查间隔，默认为 5 秒，设为 `0` 可关闭。回调投递校验公网 HTTPS 目的地，签名用于在接收方验真。API 请求包含 `callback_url` 时，需启用回调投递。
+
+`SEEDANCE_ARK_PRESET_ASSETS` 是运营核验过的官方公开素材映射，使用 JSON 对象，例如 `{"preset_example":{"name":"示例人像","asset_type":"Image","upstream_id":"asset-example"}}`。默认 `{}`，对应空目录。真人素材授权需要方舟启用对应权益并为素材凭证授予项目权限，由本人在方舟 H5 完成授权。[方舟预置人像](https://docs.volcengine.com/docs/ark/avatar-library?lang=zh) · [方舟私域真人素材](https://docs.volcengine.com/docs/ark/guide-preview?lang=zh)
 
 ### 上传本地素材
 

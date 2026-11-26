@@ -228,7 +228,7 @@ function TaskResultDialog({ taskId, videoKey, onClose, onExpired }) {
       const task = await getVideoTask(key, taskId, controller.signal);
       if (controller.signal.aborted) return;
       const url = task.status === 'succeeded' ? httpsVideoUrl(task.content?.video_url) : null;
-      setResult(url ? { state: 'ready', url } : { state: 'unavailable' });
+      setResult(url ? { state: 'ready', url, outputFormat: task.output_format } : { state: 'unavailable' });
     } catch (error) {
       if (!controller.signal.aborted) setResult({ state: 'error', message: resultErrorMessage(error) });
     } finally {
@@ -279,7 +279,7 @@ function TaskResultDialog({ taskId, videoKey, onClose, onExpired }) {
       {result?.state === 'unavailable' && <p className="notice" role="status">当前没有可播放的视频链接。链接可能已过期。</p>}
       {result?.state === 'ready' && (
         <div className="task-result-media">
-          <VideoOutput url={result.url} taskId={taskId} />
+          <VideoOutput url={result.url} taskId={taskId} outputFormat={result.outputFormat} />
         </div>
       )}
     </dialog>

@@ -12,16 +12,22 @@ function searchMetadata() {
     throw new Error('SEEDANCE_SITE_ORIGIN must be a public HTTPS origin');
   }
 
+  const publicRoutes = new Map([
+    ['/', '/'], ['/index.html', '/'],
+    ['/docs/', '/docs/'], ['/docs/index.html', '/docs/'],
+  ]);
   return {
     name: 'seedance-search-metadata',
     transformIndexHtml(_html, context) {
-      if (context.path !== '/index.html' && context.path !== '/') return [];
+      const route = publicRoutes.get(context.path);
+      if (!route) return [];
       if (!origin || context.server) {
         return [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } }];
       }
+      const target = new URL(route, origin).href;
       return [
-        { tag: 'link', attrs: { rel: 'canonical', href: origin.href } },
-        { tag: 'meta', attrs: { property: 'og:url', content: origin.href } },
+        { tag: 'link', attrs: { rel: 'canonical', href: target } },
+        { tag: 'meta', attrs: { property: 'og:url', content: target } },
       ];
     },
     generateBundle() {
@@ -30,11 +36,13 @@ function searchMetadata() {
         : 'User-agent: *\nDisallow: /\n';
       this.emitFile({ type: 'asset', fileName: 'robots.txt', source: rules });
       if (origin) {
-        const href = origin.href.replaceAll('&', '&amp;');
+        const urls = [...new Set(publicRoutes.values())].map((route) =>
+          `<url><loc>${new URL(route, origin).href.replaceAll('&', '&amp;')}</loc></url>`,
+        ).join('');
         this.emitFile({
           type: 'asset',
           fileName: 'sitemap.xml',
-          source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>${href}</loc></url></urlset>\n`,
+          source: `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${urls}</urlset>\n`,
         });
       }
     },
@@ -50,6 +58,7 @@ export default defineConfig({
       input: {
         home: fileURLToPath(new URL('./index.html', import.meta.url)),
         console: fileURLToPath(new URL('./console/index.html', import.meta.url)),
+        docs: fileURLToPath(new URL('./docs/index.html', import.meta.url)),
       },
     },
   },

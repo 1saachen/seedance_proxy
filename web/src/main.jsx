@@ -9,7 +9,7 @@ function AuthFrame({ children }) {
     <div className="auth-page">
       <header className="public-header page-width">
         <Wordmark />
-        <a href="/#quickstart">接入指南</a>
+        <a href="/docs/">开发者文档</a>
       </header>
       <main className="auth-main">{children}</main>
     </div>

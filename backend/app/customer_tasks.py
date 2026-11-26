@@ -40,7 +40,7 @@ def customer_tasks(
     if start is not None and end is not None and start > end:
         raise HTTPException(422, detail={"code": "invalid_date_range", "message": "开始日期不能晚于结束日期"})
 
-    filters = ["project_id = ?"]
+    filters = ["project_id = ?", "NOT EXISTS (SELECT 1 FROM video_task_deletions WHERE task_id = video_tasks.id)"]
     parameters = [customer.project_id]
     # SQLite treats the legacy timezone-free timestamps as UTC and honors offsets in ISO timestamps.
     for condition, value in (

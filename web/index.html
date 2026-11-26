@@ -23,7 +23,7 @@
         ><span class="brand-mark" aria-hidden="true">R</span><span>Richi Proxy</span></a
       >
       <nav class="public-nav" aria-label="主导航">
-        <a href="#quickstart">开发者文档</a>
+        <a href="/docs/">开发者文档</a>
         <a class="button secondary" href="/console/">登录工作台</a>
       </nav>
     </header>
@@ -37,7 +37,7 @@
           </p>
           <div class="hero-actions">
             <a class="button primary" href="/console/?mode=register">创建账号</a>
-            <a class="button secondary" href="#quickstart">查看接入示例</a>
+            <a class="button secondary" href="/docs/#quickstart">查看接入示例</a>
           </div>
         </div>
         <figure class="film-frame">
@@ -77,7 +77,7 @@
               <h3>查询结果</h3>
               <p>
                 使用创建任务时的 Key 查询
-                <code>GET /api/v3/contents/generations/tasks/{id}</code>。成功后及时保存返回的视频链接。
+                <code>GET /api/v3/contents/generations/tasks/{id}</code>。成功后可在链接有效期内下载视频。
               </p>
             </li>
           </ol>
@@ -104,9 +104,8 @@
         <details>
           <summary>怎样添加参考素材？</summary>
           <p>
-            开通火山素材服务后，可通过 <code>POST /api/asset/create</code> 登记公网 HTTPS
-            素材链接。对处于可用状态的素材，可使用返回的
-            <code>asset://</code> 引用提交视频任务。本地文件直传计划后续开放。
+            可以上传本地文件或登记公网 HTTPS 链接。素材状态变为 <code>Active</code> 后，把接口返回的
+            <code>asset://</code> 引用传入生成请求。<a href="/docs/#assets">查看上传与登记步骤</a>。
           </p>
         </details>
       </section>

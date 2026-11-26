@@ -8,8 +8,8 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from . import (
-    accounts, assets, billing, customer_billing, customer_tasks, model_api,
-    provider_costs, statements, upload_registration, uploads, usage,
+    accounts, asset_liveness, asset_presets, assets, billing, customer_billing, customer_tasks, model_api,
+    provider_costs, statements, upload_registration, uploads, usage, video_callbacks, video_task_management,
 )
 from .config import Settings
 from .db import Database
@@ -57,6 +57,8 @@ def create_app(
             accounts.initialize(connection)
             assets.initialize(connection)
             model_api.initialize(connection)
+            video_task_management.initialize(connection)
+            video_callbacks.initialize(connection)
             billing.initialize(connection)
             statements.initialize(connection)
             provider_costs.initialize(connection)
@@ -84,6 +86,8 @@ def create_app(
             try:
                 if settings.video_poll_seconds:
                     background_tasks.append(asyncio.create_task(poll_videos(app, settings.video_poll_seconds)))
+                if settings.video_callback_poll_seconds:
+                    background_tasks.append(asyncio.create_task(video_callbacks.run(database, settings.video_callback_poll_seconds)))
                 if settings.upload_cleanup_seconds:
                     background_tasks.append(asyncio.create_task(uploads.poll_cleanup(app, settings.upload_cleanup_seconds)))
                 yield
@@ -119,9 +123,12 @@ def create_app(
 
     app.include_router(accounts.router)
     app.include_router(assets.router)
+    app.include_router(asset_liveness.router)
+    app.include_router(asset_presets.router)
     app.include_router(uploads.router)
     app.include_router(upload_registration.router)
     app.include_router(model_api.router)
+    app.include_router(video_task_management.router)
     app.include_router(usage.router)
     app.include_router(customer_tasks.router)
     app.include_router(customer_billing.router)

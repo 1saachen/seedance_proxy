@@ -286,7 +286,7 @@ function ReferenceFiles({ selected, setSelected, referenceLimits, mediaProblem }
   );
 }
 
-export function VideoOutput({ url, taskId }) {
+export function VideoOutput({ url, taskId, outputFormat }) {
   const [playbackError, setPlaybackError] = useState(false);
   const [downloadNotice, setDownloadNotice] = useState('');
   const download = useRef(null);
@@ -308,7 +308,8 @@ export function VideoOutput({ url, taskId }) {
       const source = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = source;
-      link.download = `${taskId}.mp4`;
+      const isMov = outputFormat === 'mov' || blob.type === 'video/quicktime';
+      link.download = `${taskId}.${isMov ? 'mov' : 'mp4'}`;
       link.click();
       setTimeout(() => URL.revokeObjectURL(source), 1_000);
       setDownloadNotice('下载已开始。');
@@ -346,7 +347,7 @@ function CurrentVideo({ active, job, busy, onContinue, onEnd }) {
         <h2 id="playground-result-heading">生成预览</h2>
         {job?.status && <Status value={job.status} />}
       </div>
-      {url && active ? <VideoOutput key={url} url={url} taskId={job.id} /> : (
+      {url && active ? <VideoOutput key={url} url={url} taskId={job.id} outputFormat={job.task?.output_format} /> : (
         <div className="playground-screen">
           <span className="playground-screen-icon" aria-hidden="true">▷</span>
           <p role="status">{caption}</p>

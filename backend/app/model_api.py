@@ -6,7 +6,7 @@ import re
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from typing import Annotated, ClassVar, Literal
 from uuid import uuid4
 
 import httpx
@@ -15,16 +15,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from . import billing
 from .accounts import BusinessPrincipal, require_business_key
+from .asset_presets import is_preset_reference, translate_preset
 from .assets import is_asset_reference, is_public_https, translate_reference
 from .db import Database
+from .video_callbacks import register_callback
+from .video_media import MAX_INLINE_URL_LENGTH, VideoBodyLimit, inline_media_type, validate_inline_media
 
 
-router = APIRouter()
+router = APIRouter(route_class=VideoBodyLimit)
 logger = logging.getLogger(__name__)
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 TASKS_PATH = "/api/v3/contents/generations/tasks"
 VARIANT_RESOLUTIONS = ("480p", "720p")
 STANDARD_RESOLUTIONS = (*VARIANT_RESOLUTIONS, "1080p", "4k")
+DRAFT_MODEL = "doubao-seedance-2.5"
+DRAFT_RETENTION_CHANGE = datetime(2026, 10, 28, 2, tzinfo=timezone.utc)
+MAX_SEED = 2**31 - 1
 
 
 @dataclass(frozen=True)
@@ -48,9 +54,12 @@ SEEDANCE_20_VARIANT = VideoCapabilities(
     max_duration=15, resolutions=VARIANT_RESOLUTIONS, audio_only=False, frame_ratio_adaptive=False,
 )
 SEEDANCE_MODELS = {
-    "doubao-seedance-2.5": SeedanceModel(
+    DRAFT_MODEL: SeedanceModel(
         "doubao-seedance-2-5-260628",
-        VideoCapabilities(max_duration=30, resolutions=STANDARD_RESOLUTIONS, audio_only=True, frame_ratio_adaptive=True),
+        VideoCapabilities(
+            max_duration=30, resolutions=STANDARD_RESOLUTIONS, audio_only=True, frame_ratio_adaptive=True,
+            max_reference_images=30, max_reference_videos=10, max_reference_audios=10,
+        ),
     ),
     "doubao-seedance-2.5-flash": SeedanceModel(
         "doubao-seedance-2-5-flash-261115",
@@ -81,10 +90,19 @@ UPSTREAM_STATES = {
 }
 ACTIVE_STATES = {"queued", "running"}
 TERMINAL_STATES = {"succeeded", "failed", "canceled", "expired"}
+CANCELLATION_PENDING_FIELD = """EXISTS (
+    SELECT 1 FROM video_task_cancellations
+    WHERE task_id = video_tasks.id AND attempted = 1 AND video_tasks.status IN ('queued', 'running')
+) AS cancellation_pending"""
 RESOLUTIONS = set(STANDARD_RESOLUTIONS)
 RATIOS = {"16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"}
 UPSTREAM_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 ASSET_MEDIA_TYPES = {"image_url": "Image", "video_url": "Video", "audio_url": "Audio"}
+VIDEO_TASK_TYPES = {"auto", "reference", "edit", "extend"}
+TASK_TYPE_ERRORS = {
+    "InvalidParameter.TaskTypeConstraint": "The task parameters are incompatible with the selected video operation",
+    "InvalidParameter.TaskTypeMismatch": "The prompt and reference media describe a different video operation",
+}
 
 
 def initialize(connection: sqlite3.Connection) -> None:
@@ -106,6 +124,9 @@ def initialize(connection: sqlite3.Connection) -> None:
             settled_at TEXT,
             last_polled_at TEXT,
             upstream_model TEXT,
+            is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1)),
+            draft_task_id TEXT REFERENCES video_tasks(id),
+            safety_identifier_hash TEXT,
             UNIQUE(key_id, idempotency_key)
         );
         CREATE INDEX IF NOT EXISTS video_tasks_project_settled
@@ -115,8 +136,15 @@ def initialize(connection: sqlite3.Connection) -> None:
             ON video_tasks(COALESCE(last_polled_at, created_at), created_at, id)
             WHERE status IN ('queued', 'running') AND upstream_id IS NOT NULL;
     """)
-    if "upstream_model" not in {column[1] for column in connection.execute("PRAGMA table_info(video_tasks)")}:
-        connection.execute("ALTER TABLE video_tasks ADD COLUMN upstream_model TEXT")
+    columns = {column[1] for column in connection.execute("PRAGMA table_info(video_tasks)")}
+    for name, definition in (
+        ("upstream_model", "TEXT"),
+        ("is_draft", "INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1))"),
+        ("draft_task_id", "TEXT REFERENCES video_tasks(id)"),
+        ("safety_identifier_hash", "TEXT"),
+    ):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE video_tasks ADD COLUMN {name} {definition}")
 
 
 class ModelInput(BaseModel):
@@ -125,13 +153,28 @@ class ModelInput(BaseModel):
 
 class MediaURL(ModelInput):
     url: str = Field(min_length=1, max_length=4096)
+    inline_type: ClassVar[str | None] = None
 
     @field_validator("url")
     @classmethod
     def valid_media_reference(cls, value: str) -> str:
-        if not (is_asset_reference(value) or is_public_https(value)):
-            raise ValueError("reference media must use a registered asset reference or a public HTTPS URL")
+        if cls.inline_type is not None and inline_media_type(value) == cls.inline_type:
+            return value
+        if len(value) > 4096:
+            raise ValueError("remote media URLs cannot exceed 4096 characters")
+        if not (is_asset_reference(value) or is_preset_reference(value) or is_public_https(value)):
+            raise ValueError("use a registered asset, public HTTPS URL, or a supported inline data URL")
         return value
+
+
+class ImageURL(MediaURL):
+    url: str = Field(min_length=1, max_length=MAX_INLINE_URL_LENGTH)
+    inline_type: ClassVar[str] = "Image"
+
+
+class AudioURL(MediaURL):
+    url: str = Field(min_length=1, max_length=MAX_INLINE_URL_LENGTH)
+    inline_type: ClassVar[str] = "Audio"
 
 
 class TextContent(ModelInput):
@@ -148,7 +191,7 @@ class TextContent(ModelInput):
 
 class ImageContent(ModelInput):
     type: Literal["image_url"]
-    image_url: MediaURL
+    image_url: ImageURL
     role: Literal["first_frame", "last_frame", "reference_image"] = "reference_image"
 
 
@@ -160,11 +203,24 @@ class VideoContent(ModelInput):
 
 class AudioContent(ModelInput):
     type: Literal["audio_url"]
-    audio_url: MediaURL
+    audio_url: AudioURL
     role: Literal["reference_audio"] = "reference_audio"
 
 
-Content = Annotated[TextContent | ImageContent | VideoContent | AudioContent, Field(discriminator="type")]
+class DraftReference(ModelInput):
+    id: str = Field(pattern=r"^vid_[a-f0-9]{32}$")
+
+
+class DraftContent(ModelInput):
+    type: Literal["draft_task"]
+    draft_task: DraftReference
+
+
+class VideoTool(ModelInput):
+    type: Literal["web_search"]
+
+
+Content = Annotated[TextContent | ImageContent | VideoContent | AudioContent | DraftContent, Field(discriminator="type")]
 
 
 class VideoRequest(ModelInput):
@@ -173,10 +229,26 @@ class VideoRequest(ModelInput):
     duration: int | None = None
     resolution: Literal["480p", "720p", "1080p", "4k"] | None = None
     ratio: Literal["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"] | None = None
-    seed: int | None = Field(default=None, ge=-1, le=2**32 - 1)
+    seed: int | None = Field(default=None, ge=-1, le=MAX_SEED)
     generate_audio: bool | None = None
     return_last_frame: bool | None = None
     watermark: bool | None = None
+    draft: bool | None = None
+    omni_reference_task_type: Literal["auto", "reference", "edit", "extend"] | None = None
+    output_format: Literal["mp4", "mov"] | None = None
+    service_tier: Literal["default"] | None = None
+    priority: int | None = Field(default=None, ge=0, le=9)
+    execution_expires_after: int | None = Field(default=None, ge=3600, le=259200)
+    tools: list[VideoTool] | None = Field(default=None, max_length=1)
+    safety_identifier: str | None = Field(default=None, pattern=r"^[!-~]{1,64}$")
+    callback_url: str | None = Field(default=None, max_length=2048)
+
+    @field_validator("callback_url")
+    @classmethod
+    def valid_callback_url(cls, value: str | None) -> str | None:
+        if value is not None and not is_public_https(value):
+            raise ValueError("callback_url must be a public HTTPS URL")
+        return value
 
     @model_validator(mode="after")
     def validate_request(self):
@@ -189,6 +261,24 @@ class VideoRequest(ModelInput):
         if self.resolution is not None and self.resolution not in limits.resolutions:
             raise ValueError(f"resolution must be one of {', '.join(limits.resolutions)} for {self.model}")
         kinds = [item.type for item in self.content]
+        if self.output_format is not None and not limits.frame_ratio_adaptive:
+            raise ValueError("output_format is available for the Seedance 2.5 series")
+        if self.priority is not None and self.model == "doubao-seedance-2.5-flash":
+            raise ValueError("priority is not supported by Seedance 2.5 Flash")
+        if self.tools and not limits.frame_ratio_adaptive and kinds != ["text"]:
+            raise ValueError("Seedance 2.0 series supports web search with text-only input")
+        if "draft_task" in kinds:
+            if self.model != DRAFT_MODEL or kinds != ["draft_task"] or self.draft is True:
+                raise ValueError("a final video requires one Seedance 2.5 draft_task and draft omitted or false")
+            if self.resolution not in {"1080p", "4k"}:
+                raise ValueError("a final video from a draft requires resolution 1080p or 4k")
+            if any(value is not None for value in (
+                self.duration, self.ratio, self.seed, self.generate_audio, self.omni_reference_task_type, self.tools,
+            )):
+                raise ValueError("a final video from a draft inherits its generation parameters")
+            return self
+        if self.draft and (self.model != DRAFT_MODEL or self.resolution not in {None, "480p"}):
+            raise ValueError("draft videos use standard Seedance 2.5 and resolution 480p")
         for kind, count in (
             ("text", 1),
             ("image_url", limits.max_reference_images),
@@ -205,6 +295,17 @@ class VideoRequest(ModelInput):
                 raise ValueError(f"{self.model} frame generation uses the adaptive ratio")
         if not limits.audio_only and "audio_url" in kinds and not {"image_url", "video_url"} & set(kinds):
             raise ValueError(f"{self.model} requires a reference image or video with reference audio")
+        operation = self.omni_reference_task_type
+        if operation is not None and not limits.frame_ratio_adaptive:
+            raise ValueError("omni_reference_task_type is available for the Seedance 2.5 series")
+        if operation in {"reference", "edit", "extend"}:
+            if {"first_frame", "last_frame"} & set(frames) or not {"image_url", "video_url", "audio_url"} & set(kinds):
+                raise ValueError("omni_reference_task_type requires reference media")
+        if operation in {"edit", "extend"}:
+            if "video_url" not in kinds or self.ratio not in {None, "adaptive"}:
+                raise ValueError("edit and extend require a reference video and an adaptive ratio")
+            if operation == "edit" and self.duration not in {None, -1}:
+                raise ValueError("edit requires duration -1")
         return self
 
 
@@ -228,7 +329,10 @@ def _ark_headers(app: FastAPI) -> dict[str, str]:
 def _task(request: Request, principal: BusinessPrincipal, task_id: str) -> sqlite3.Row:
     with request.app.state.db.connect() as connection:
         row = connection.execute(
-            "SELECT * FROM video_tasks WHERE id = ? AND project_id = ? AND key_id = ?",
+            f"""
+            SELECT video_tasks.*, {CANCELLATION_PENDING_FIELD} FROM video_tasks WHERE id = ? AND project_id = ? AND key_id = ?
+            AND NOT EXISTS (SELECT 1 FROM video_task_deletions WHERE task_id = video_tasks.id)
+            """,
             (task_id, principal.project_id, principal.key_id),
         ).fetchone()
     if row is None:
@@ -237,12 +341,43 @@ def _task(request: Request, principal: BusinessPrincipal, task_id: str) -> sqlit
 
 
 def _public_task(row: sqlite3.Row) -> dict:
-    return {
+    result = {
         "id": row["id"],
         "model": row["model"],
         "status": "cancelled" if row["status"] == "canceled" else row["status"],
         **json.loads(row["result_json"]),
     }
+    if row["is_draft"]:
+        result["draft"] = True
+    if row["draft_task_id"]:
+        result["draft_task_id"] = row["draft_task_id"]
+    if row["safety_identifier_hash"]:
+        result["safety_identifier"] = row["safety_identifier_hash"]
+    if row["cancellation_pending"]:
+        result["cancellation_pending"] = True
+    result.setdefault("created_at", int(datetime.fromisoformat(row["created_at"]).replace(tzinfo=timezone.utc).timestamp()))
+    return result
+
+
+def _usable_draft(
+    connection: sqlite3.Connection, principal: BusinessPrincipal, draft_id: str, model: str, upstream_model: str,
+) -> sqlite3.Row:
+    draft = connection.execute("""
+        SELECT * FROM video_tasks WHERE id = ? AND project_id = ? AND key_id = ?
+        AND model = ? AND upstream_model = ? AND is_draft = 1 AND status = 'succeeded' AND upstream_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM video_task_deletions WHERE task_id = video_tasks.id)
+    """, (draft_id, principal.project_id, principal.key_id, model, upstream_model)).fetchone()
+    if draft is None:
+        raise _error(404, "video_draft_not_found", "A successful draft for this API Key was not found")
+    created_at = json.loads(draft["result_json"]).get("created_at")
+    created = (
+        datetime.fromtimestamp(created_at, tz=timezone.utc) if type(created_at) is int
+        else datetime.fromisoformat(draft["created_at"]).replace(tzinfo=timezone.utc)
+    )
+    lifetime = timedelta(days=14 if created >= DRAFT_RETENTION_CHANGE else 7)
+    if datetime.now(timezone.utc) >= created + lifetime:
+        raise _error(410, "video_draft_expired", "The draft is no longer eligible for final generation")
+    return draft
 
 
 def _response_object(response: httpx.Response) -> dict:
@@ -282,6 +417,17 @@ async def create_task(
         raise _error(422, "idempotency_key_invalid", "Idempotency-Key must contain 1 to 128 visible ASCII characters")
     clean = payload.model_dump(exclude_none=True)
     fingerprint = hashlib.sha256(json.dumps(clean, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    callback_url = clean.pop("callback_url", None)
+    safety_identifier_hash = None
+    if payload.safety_identifier is not None:
+        safety_identifier_hash = hashlib.sha256(f"{principal.project_id}\0{payload.safety_identifier}".encode()).hexdigest()
+        clean["safety_identifier"] = safety_identifier_hash
+    if payload.draft:
+        clean.setdefault("resolution", "480p")
+    if payload.omni_reference_task_type in {"edit", "extend"}:
+        clean.setdefault("ratio", "adaptive")
+    if payload.omni_reference_task_type == "edit":
+        clean.setdefault("duration", -1)
     task_id = f"vid_{uuid4().hex}"
     idempotency_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key is not None else None
     if idempotency_hash is not None:
@@ -292,20 +438,28 @@ async def create_task(
             ).fetchone()
         if existing is not None:
             return _replay(existing, fingerprint)
+    if callback_url is not None and not request.app.state.settings.video_callback_poll_seconds:
+        raise _error(503, "video_callback_unavailable", "Video callback delivery is not configured")
     headers = _ark_headers(request.app)
     upstream_model = SEEDANCE_MODELS[payload.model].upstream_id
+    if any(
+        item["type"] in ASSET_MEDIA_TYPES and inline_media_type(item[item["type"]]["url"])
+        for item in clean["content"]
+    ):
+        await asyncio.to_thread(validate_inline_media, clean["content"])
     with request.app.state.db.connect() as connection:
         result = connection.execute(
             """INSERT INTO video_tasks
                 (id, project_id, key_id, idempotency_key, request_hash, model, status,
-                 requested_resolution, contains_video_input, upstream_model)
-                SELECT ?, ?, ?, ?, ?, ?, 'submitting', ?, ?, ?
+                 requested_resolution, contains_video_input, upstream_model, is_draft, safety_identifier_hash)
+                SELECT ?, ?, ?, ?, ?, ?, 'submitting', ?, ?, ?, ?, ?
                 WHERE (SELECT COUNT(*) FROM video_tasks WHERE project_id = ?
                        AND created_at >= DATETIME('now', '+8 hours', 'start of day', '-8 hours')) < ?
                 ON CONFLICT(key_id, idempotency_key) DO NOTHING""",
             (task_id, principal.project_id, principal.key_id, idempotency_hash, fingerprint,
-             payload.model, payload.resolution, any(isinstance(item, VideoContent) for item in payload.content),
-             upstream_model, principal.project_id, request.app.state.settings.video_daily_limit),
+             payload.model, clean.get("resolution"), any(isinstance(item, VideoContent) for item in payload.content),
+             upstream_model, bool(payload.draft), safety_identifier_hash,
+             principal.project_id, request.app.state.settings.video_daily_limit),
         )
         if result.rowcount == 0:
             existing = connection.execute(
@@ -315,14 +469,30 @@ async def create_task(
             if existing is not None:
                 return _replay(existing, fingerprint)
             raise _error(429, "video_daily_limit", "Project reached its daily video submission limit")
+        if callback_url is not None:
+            register_callback(connection, task_id, callback_url)
         for item in clean["content"]:
             kind = item["type"]
-            if kind == "text" or not is_asset_reference(item[kind]["url"]):
+            if kind == "draft_task":
+                draft_id = item["draft_task"]["id"]
+                draft = _usable_draft(connection, principal, draft_id, payload.model, upstream_model)
+                connection.execute(
+                    "UPDATE video_tasks SET draft_task_id = ?, contains_video_input = ? WHERE id = ?",
+                    (draft_id, draft["contains_video_input"], task_id),
+                )
+                item["draft_task"]["id"] = draft["upstream_id"]
+            if kind not in ASSET_MEDIA_TYPES:
                 continue
-            item[kind]["url"] = translate_reference(
-                connection, principal.project_id, item[kind]["url"], media_type=ASSET_MEDIA_TYPES[kind],
-                upstream_project=request.app.state.settings.ark_asset_project,
-            )
+            url = item[kind]["url"]
+            if is_preset_reference(url):
+                item[kind]["url"] = translate_preset(
+                    request.app.state.settings.ark_preset_assets, url, media_type=ASSET_MEDIA_TYPES[kind],
+                )
+            elif is_asset_reference(url):
+                item[kind]["url"] = translate_reference(
+                    connection, principal.project_id, url, media_type=ASSET_MEDIA_TYPES[kind],
+                    upstream_project=request.app.state.settings.ark_asset_project,
+                )
     clean["model"] = upstream_model
     upstream_id = None
     status = "submission_unknown"
@@ -372,6 +542,33 @@ def _provider_result(data: dict, status: str) -> tuple[dict, int | None]:
     duration = data.get("duration")
     if type(duration) is int and 0 < duration <= 30:
         result["duration"] = duration
+    for field, minimum, maximum in (
+        ("seed", -1, MAX_SEED), ("priority", 0, 9), ("frames", 1, 3600), ("framespersecond", 1, 120),
+        ("execution_expires_after", 3600, 259200),
+    ):
+        value = data.get(field)
+        if type(value) is int and minimum <= value <= maximum:
+            result[field] = value
+    for field in ("created_at", "updated_at"):
+        timestamp = _provider_time(data.get(field))
+        if timestamp is not None:
+            result[field] = timestamp
+    for field in ("draft", "generate_audio", "watermark"):
+        value = data.get(field)
+        if type(value) is bool:
+            result[field] = value
+    for field, allowed in (
+        ("output_format", {"mp4", "mov"}), ("omni_reference_task_type", VIDEO_TASK_TYPES),
+        ("service_tier", {"default"}),
+    ):
+        value = data.get(field)
+        if isinstance(value, str) and value in allowed:
+            result[field] = value
+    tools = data.get("tools")
+    if isinstance(tools, list) and any(
+        isinstance(tool, dict) and tool.get("type") == "web_search" for tool in tools
+    ):
+        result["tools"] = [{"type": "web_search"}]
     if status == "succeeded":
         content = data.get("content")
         if isinstance(content, dict):
@@ -383,20 +580,32 @@ def _provider_result(data: dict, status: str) -> tuple[dict, int | None]:
                 result["content"] = urls
         usage = data.get("usage")
         if isinstance(usage, dict):
-            tokens = {field: usage[field] for field in ("completion_tokens", "total_tokens")
-                      if type(usage.get(field)) is int and 0 <= usage[field] <= billing.MAX_TOKENS}
-            if tokens:
-                result["usage"] = tokens
-            return result, tokens.get("completion_tokens")
+            valid_usage = {field: usage[field] for field in ("completion_tokens", "total_tokens")
+                           if type(usage.get(field)) is int and 0 <= usage[field] <= billing.MAX_TOKENS}
+            tool_usage = usage.get("tool_usage")
+            searches = tool_usage.get("web_search") if isinstance(tool_usage, dict) else None
+            if type(searches) is int and 0 <= searches <= billing.MAX_TOKENS:
+                valid_usage["tool_usage"] = {"web_search": searches}
+            if valid_usage:
+                result["usage"] = valid_usage
+            return result, valid_usage.get("completion_tokens")
     if status == "failed":
         result["error"] = {"code": "video_generation_failed", "message": "Seedance could not generate the video"}
+        upstream_error = data.get("error")
+        code = upstream_error.get("code") if isinstance(upstream_error, dict) else None
+        if isinstance(code, str) and code in TASK_TYPE_ERRORS:
+            result["error"].update(provider_code=code, message=TASK_TYPE_ERRORS[code])
     return result, None
 
 
-def _provider_settlement_time(data: dict, created_at: str) -> str | None:
-    updated_at = data.get("updated_at")
+def _provider_time(value: object) -> int | None:
     now = datetime.now(timezone.utc)
-    if type(updated_at) is not int or not 0 < updated_at <= now.timestamp() + 60:
+    return value if type(value) is int and 0 < value <= now.timestamp() + 60 else None
+
+
+def _provider_settlement_time(data: dict, created_at: str) -> str | None:
+    updated_at = _provider_time(data.get("updated_at"))
+    if updated_at is None:
         return None
     updated = datetime.fromtimestamp(updated_at, tz=timezone.utc)
     created = datetime.fromisoformat(created_at).replace(tzinfo=timezone.utc)
@@ -418,6 +627,15 @@ async def _refresh_task(app: FastAPI, row: sqlite3.Row, headers: dict[str, str])
         response = await app.state.ark.get(f"{TASKS_PATH}/{row['upstream_id']}", headers=headers)
     except httpx.RequestError:
         raise _error(502, "video_status_unavailable", "Seedance task status is temporarily unavailable") from None
+    if response.status_code == 404:
+        with app.state.db.connect() as connection:
+            missing = connection.execute("""
+                UPDATE video_task_cancellations SET upstream_missing = 1
+                WHERE task_id = ? AND attempted = 1 RETURNING task_id
+            """, (row["id"],)).fetchone()
+        if missing is not None:
+            # A missing Ark task after DELETE is not evidence of cancellation or success.
+            return
     data = _response_object(response) if response.is_success else {}
     upstream_status = data.get("status")
     status = UPSTREAM_STATES.get(upstream_status) if isinstance(upstream_status, str) else None
@@ -430,6 +648,8 @@ async def _refresh_task(app: FastAPI, row: sqlite3.Row, headers: dict[str, str])
         if status != "succeeded" and settled_at is None:
             settled_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with app.state.db.connect() as connection:
+        connection.execute("UPDATE video_task_cancellations SET upstream_missing = 0 WHERE task_id = ? AND upstream_missing = 1",
+                           (row["id"],))
         settled = connection.execute(
             """UPDATE video_tasks
                SET status = ?, result_json = ?, output_tokens = ?, settled_at = ?
@@ -453,6 +673,7 @@ async def poll_unfinished(app: FastAPI) -> int:
     with app.state.db.connect() as connection:
         pending = connection.execute(
             "SELECT * FROM video_tasks WHERE status IN ('queued', 'running') AND upstream_id IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM video_task_cancellations WHERE task_id = video_tasks.id AND upstream_missing = 1) "
             "ORDER BY COALESCE(last_polled_at, created_at), created_at, id LIMIT 20"
         ).fetchall()
 

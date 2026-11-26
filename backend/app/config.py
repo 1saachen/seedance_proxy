@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .asset_presets import PresetAsset, PresetId
 from .urls import is_public_https
 
 
@@ -19,9 +20,11 @@ class Settings(BaseSettings):
     ark_api_key: SecretStr | None = None
     video_daily_limit: int = Field(default=5, ge=1, le=1000)
     video_poll_seconds: int = Field(default=20, ge=0, le=300)
+    video_callback_poll_seconds: int = Field(default=5, ge=0, le=300)
     ark_asset_access_key: SecretStr | None = None
     ark_asset_secret_key: SecretStr | None = None
     ark_asset_project: str = Field(default="default", min_length=1, max_length=64)
+    ark_preset_assets: dict[PresetId, PresetAsset] = Field(default_factory=dict)
     upload_directory: Path | None = None
     upload_public_origin: str = ""
     upload_link_ttl_seconds: int = Field(default=3600, ge=60, le=86400)

@@ -1,12 +1,15 @@
 import asyncio
+from base64 import b64decode, b64encode
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from io import BytesIO
 import json
 from threading import Event
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app.billing import add_price, add_project_terms
 from app.config import Settings
@@ -50,6 +53,7 @@ def _no_upstream(request):
 
 def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
     calls = []
+    started = int(datetime.now(timezone.utc).timestamp())
 
     def upstream(request):
         calls.append(request.method)
@@ -67,7 +71,7 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
             "id": "provider-task-01", "model": "hidden-upstream-model", "status": "succeeded",
             "content": {"video_url": "https://cdn.example.com/result.mp4?signature=sample", "extra": ARK_SECRET},
             "duration": 5, "resolution": "720p", "ratio": "16:9",
-            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 124_102, "total_tokens": 124_102, "extra": ARK_SECRET},
         })
 
@@ -81,6 +85,9 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
             "doubao-seedance-2.5", "doubao-seedance-2.5-flash",
             "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini",
         ]
+        assert tuple(models[0]["video"][field] for field in (
+            "max_reference_images", "max_reference_videos", "max_reference_audios",
+        )) == (30, 10, 10)
         body = {**PROMPT, "resolution": "720p", "content": [
             *PROMPT["content"], {"type": "video_url", "video_url": {"url": "https://media.example.com/sample.mp4"}},
         ]}
@@ -100,6 +107,7 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
             "id": task_id, "model": "doubao-seedance-2.5", "status": "succeeded",
             "content": {"video_url": "https://cdn.example.com/result.mp4?signature=sample"},
             "duration": 5, "resolution": "720p", "ratio": "16:9",
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 124_102, "total_tokens": 124_102},
         }
         assert "provider-task-01" not in response.text
@@ -124,6 +132,7 @@ def _media_content(media, count):
 ])
 def test_standard_models_create_and_settle_4k_tasks(tmp_path, alias, upstream_model, provider_resolution):
     calls = []
+    started = int(datetime.now(timezone.utc).timestamp())
 
     def upstream(request):
         calls.append(request.method)
@@ -137,7 +146,7 @@ def test_standard_models_create_and_settle_4k_tasks(tmp_path, alias, upstream_mo
         return httpx.Response(200, json={
             "id": "provider-4k", "status": "succeeded", "resolution": provider_resolution,
             "content": {"video_url": "https://cdn.example.com/4k.mp4"},
-            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 120},
         })
 
@@ -161,6 +170,7 @@ def test_standard_models_create_and_settle_4k_tasks(tmp_path, alias, upstream_mo
         assert task == {
             "id": task_id, "model": alias, "status": "succeeded", "resolution": "4k",
             "content": {"video_url": "https://cdn.example.com/4k.mp4"},
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 120},
         }
         assert calls == ["POST", "GET"]
@@ -183,6 +193,7 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
         "content": [*PROMPT["content"], *references],
     }
     calls = []
+    started = int(datetime.now(timezone.utc).timestamp())
 
     def upstream(request):
         calls.append(request.method)
@@ -197,7 +208,7 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
         return httpx.Response(200, json={
             "id": "provider-variant", "status": "succeeded", "resolution": "480p",
             "content": {"video_url": "https://cdn.example.com/variant.mp4"},
-            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 42},
         })
 
@@ -246,6 +257,7 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
         assert status.json() == {
             "id": task_id, "model": alias, "status": "succeeded", "resolution": "480p",
             "content": {"video_url": "https://cdn.example.com/variant.mp4"},
+            "created_at": started, "updated_at": started,
             "usage": {"completion_tokens": 42},
         }
         assert calls == ["POST", "GET"]
@@ -254,6 +266,258 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
                 "SELECT upstream_model, status, amount_micros FROM video_charges WHERE task_id = ?", (task_id,),
             ).fetchone()
             assert tuple(charge) == (upstream_model, "priced", 126)
+
+
+def test_draft_final_uses_the_same_key_and_preserves_billable_video_input(tmp_path):
+    submissions = []
+
+    def upstream(request):
+        if request.method == "POST":
+            body = json.loads(request.content)
+            submissions.append(body)
+            if body.get("draft"):
+                assert body["resolution"] == "480p"
+                assert body["content"][1]["type"] == "video_url"
+                return httpx.Response(200, json={"id": "provider-draft"})
+            assert body["content"] == [{"type": "draft_task", "draft_task": {"id": "provider-draft"}}]
+            assert body["resolution"] == "4k"
+            return httpx.Response(200, json={"id": "provider-final"})
+        upstream_id = request.url.path.rsplit("/", 1)[1]
+        draft = upstream_id == "provider-draft"
+        assert draft or upstream_id == "provider-final"
+        return httpx.Response(200, json={
+            "id": upstream_id, "status": "succeeded", "resolution": "480p" if draft else "4k",
+            "draft": draft, "draft_task_id": "provider-draft" if not draft else None,
+            "usage": {"completion_tokens": 1_000_000},
+            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+        })
+
+    with _client(tmp_path, upstream, limit=2) as client:
+        csrf = _register(client)
+        owner = _key(client, csrf)
+        other_key = _key(client, csrf)
+        project = client.get("/api/customer/me").json()["customer"]["projectId"]
+        with client.app.state.db.connect() as connection:
+            add_project_terms(connection, project_id=project, effective_at=0, enabled=True, payable_bps=10_000)
+            for resolution, expected_rate in (("480p", 1_000_000), ("4k", 2_000_000)):
+                add_price(
+                    connection, upstream_model="doubao-seedance-2-5-260628", resolution=resolution,
+                    contains_video_input=True, effective_at=0, unit_price_micros_per_million=expected_rate,
+                    source="synthetic draft rate",
+                )
+        created = client.post(TASKS_PATH, headers=owner, json={
+            **PROMPT, "draft": True, "content": [*PROMPT["content"], *_media_content("video_url", 1)],
+        })
+        assert created.status_code == 200, created.text
+        draft_id = created.json()["id"]
+        final_body = {
+            "model": PROMPT["model"], "resolution": "4k",
+            "content": [{"type": "draft_task", "draft_task": {"id": draft_id}}],
+        }
+        assert client.post(TASKS_PATH, headers=owner, json=final_body).status_code == 404
+        draft = client.get(f"{TASKS_PATH}/{draft_id}", headers=owner)
+        assert draft.json()["draft"] is True
+        assert draft.json()["resolution"] == "480p"
+        assert client.post(TASKS_PATH, headers=other_key, json=final_body).status_code == 404
+        other_project = _key(client, _register(client, "bob"))
+        assert client.post(TASKS_PATH, headers=other_project, json=final_body).status_code == 404
+        headers = {**owner, "Idempotency-Key": "final"}
+        created = client.post(TASKS_PATH, headers=headers, json=final_body)
+        assert created.status_code == 200, created.text
+        final_id = created.json()["id"]
+        assert final_id != draft_id
+        assert client.post(TASKS_PATH, headers=headers, json=final_body).json() == {"id": final_id}
+        final = client.get(f"{TASKS_PATH}/{final_id}", headers=owner)
+        assert final.json()["draft_task_id"] == draft_id
+        assert "provider-draft" not in final.text and "provider-final" not in final.text
+        assert len(submissions) == 2
+        with client.app.state.db.connect() as connection:
+            rows = connection.execute(
+                "SELECT resolution, status, amount_micros FROM video_charges ORDER BY amount_micros"
+            ).fetchall()
+            assert [tuple(row) for row in rows] == [("480p", "priced", 1_000_000), ("4k", "priced", 2_000_000)]
+
+
+def test_expired_and_unsupported_drafts_do_not_reserve_a_submission(tmp_path):
+    def upstream(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"id": "provider-draft-expired"})
+        return httpx.Response(200, json={"id": "provider-draft-expired", "status": "succeeded"})
+
+    with _client(tmp_path, upstream) as client:
+        owner = _key(client, _register(client))
+        created = client.post(TASKS_PATH, headers=owner, json={**PROMPT, "draft": True})
+        assert created.status_code == 200
+        task_id = created.json()["id"]
+        assert client.get(f"{TASKS_PATH}/{task_id}", headers=owner).json()["status"] == "succeeded"
+        with client.app.state.db.connect() as connection:
+            connection.execute(
+                "UPDATE video_tasks SET created_at = ? WHERE id = ?",
+                ((datetime.now(timezone.utc) - timedelta(days=15)).strftime("%Y-%m-%d %H:%M:%S"), task_id),
+            )
+        content = [{"type": "draft_task", "draft_task": {"id": task_id}}]
+        final = {**PROMPT, "resolution": "1080p", "content": content}
+        failed = client.post(TASKS_PATH, headers=owner, json=final)
+        assert failed.status_code == 410
+        assert failed.json()["detail"]["code"] == "video_draft_expired"
+        for invalid in (
+            {**PROMPT, "model": "doubao-seedance-2.5-flash", "draft": True},
+            {**PROMPT, "resolution": "720p", "draft": True},
+            {**final, "resolution": "720p"},
+            {**final, "resolution": None},
+            {**final, "ratio": "adaptive"},
+            {**final, "content": [*content, *PROMPT["content"]]},
+            {**final, "content": [{"type": "draft_task", "draft_task": {"id": "provider-draft-expired"}}]},
+        ):
+            assert client.post(TASKS_PATH, headers=owner, json=invalid).status_code == 422
+        with client.app.state.db.connect() as connection:
+            assert connection.execute("SELECT count(*) FROM video_tasks").fetchone()[0] == 1
+
+
+def test_edit_options_and_search_usage_are_validated_and_preserved(tmp_path):
+    searches = [{"type": "web_search"}]
+    options = {
+        "omni_reference_task_type": "edit", "output_format": "mov", "execution_expires_after": 3600,
+        "priority": 9, "tools": searches, "safety_identifier": "sample-user-identifier",
+    }
+    body = {**PROMPT, **options, "content": [*PROMPT["content"], *_media_content("video_url", 1)]}
+    scope_hashes = []
+
+    def upstream(request):
+        if request.method == "POST":
+            sent = json.loads(request.content)
+            assert sent["ratio"] == "adaptive" and sent["duration"] == -1
+            assert {key: sent[key] for key in options if key != "safety_identifier"} == {
+                key: value for key, value in options.items() if key != "safety_identifier"
+            }
+            scope_hashes.append(sent["safety_identifier"])
+            assert len(sent["safety_identifier"]) == 64
+            return httpx.Response(200, json={"id": f"provider-edit-{len(scope_hashes)}"})
+        return httpx.Response(200, json={
+            "status": "succeeded", "output_format": "mov", "priority": 9, "execution_expires_after": 3600,
+            "omni_reference_task_type": "edit", "framespersecond": 24, "generate_audio": True, "seed": 100,
+            "safety_identifier": ARK_SECRET,
+            "tools": [{"type": "web_search", "extra": ARK_SECRET}, {"type": "unsupported"}],
+            "usage": {"completion_tokens": 42, "tool_usage": {"web_search": 0, "other": 9}},
+        })
+
+    with _client(tmp_path, upstream) as client:
+        owner = _key(client, _register(client))
+        for invalid in (
+            {**body, "ratio": "16:9"}, {**body, "duration": 4}, {**body, "content": PROMPT["content"]},
+            {**body, "omni_reference_task_type": "extend", "ratio": "9:16"},
+            {**body, "model": "doubao-seedance-2.0", "output_format": None},
+            {**body, "model": "doubao-seedance-2.5-flash", "priority": 1},
+            {**body, "tools": [{"type": "untrusted"}]}, {**body, "tools": [*searches, *searches]},
+            {**body, "execution_expires_after": 3599}, {**body, "safety_identifier": "带空格"},
+        ):
+            assert client.post(TASKS_PATH, headers=owner, json=invalid).status_code == 422
+        created = client.post(TASKS_PATH, headers=owner, json=body)
+        assert created.status_code == 200, created.text
+        task = client.get(f"{TASKS_PATH}/{created.json()['id']}", headers=owner)
+        assert task.json()["output_format"] == "mov"
+        assert task.json()["tools"] == searches
+        assert task.json()["usage"] == {"completion_tokens": 42, "tool_usage": {"web_search": 0}}
+        assert task.json()["safety_identifier"] == scope_hashes[0]
+        assert ARK_SECRET not in task.text and options["safety_identifier"] not in task.text
+        other = _key(client, _register(client, "bob"))
+        assert client.post(TASKS_PATH, headers=other, json=body).status_code == 200
+        assert len(scope_hashes) == 2 and scope_hashes[0] != scope_hashes[1]
+
+
+def test_extend_supports_2_5_explicit_and_2_0_prompt_based_flows(tmp_path):
+    content = [
+        {"type": "text", "text": "Extend the video by continuing the camera movement."},
+        *_media_content("video_url", 1),
+    ]
+    requests = []
+
+    def upstream(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": f"provider-extend-{len(requests)}"})
+
+    with _client(tmp_path, upstream) as client:
+        owner = _key(client, _register(client))
+        for body in (
+            {**PROMPT, "content": content, "omni_reference_task_type": "extend", "duration": 6},
+            {"model": "doubao-seedance-2.0", "content": content, "duration": 5, "ratio": "16:9"},
+        ):
+            result = client.post(TASKS_PATH, headers=owner, json=body)
+            assert result.status_code == 200, result.text
+        explicit, prompt_based = requests
+        assert explicit["omni_reference_task_type"] == "extend"
+        assert explicit["ratio"] == "adaptive" and explicit["duration"] == 6
+        assert "omni_reference_task_type" not in prompt_based
+        assert prompt_based["ratio"] == "16:9" and prompt_based["duration"] == 5
+        rejected = client.post(TASKS_PATH, headers=owner, json={
+            "model": "doubao-seedance-2.0", "content": content, "tools": [{"type": "web_search"}],
+        })
+        assert rejected.status_code == 422 and len(requests) == 2
+
+
+def test_base64_media_is_decoded_and_body_is_bounded_before_submission(tmp_path, monkeypatch):
+    binary = BytesIO()
+    Image.new("RGB", (320, 320), (23, 132, 114)).save(binary, format="PNG")
+    data_url = "data:image/png;base64," + b64encode(binary.getvalue()).decode("ascii")
+    body = {**PROMPT, "content": [{
+        "type": "image_url", "role": "first_frame", "image_url": {"url": data_url},
+    }]}
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        assert json.loads(request.content)["content"][0]["image_url"]["url"] == data_url
+        return httpx.Response(200, json={"id": "provider-inline"})
+
+    with _client(tmp_path, upstream) as client:
+        owner = _key(client, _register(client))
+        for declared_url in (
+            "data:image/png;base64,invalid!!", "data:image/png;base64,AAAA",
+            data_url.replace("image/png", "image/jpeg", 1),
+        ):
+            response = client.post(TASKS_PATH, headers=owner, json={**body, "content": [{
+                "type": "image_url", "image_url": {"url": declared_url},
+            }]})
+            assert response.status_code in {415, 422}
+        assert not calls
+        response = client.post(TASKS_PATH, headers=owner, json=body)
+        assert response.status_code == 200, response.text
+        monkeypatch.setattr("app.video_media.MAX_VIDEO_REQUEST_BYTES", 100)
+        assert client.post(TASKS_PATH, json=body).status_code == 401
+        response = client.post(TASKS_PATH, headers=owner, json=body)
+        assert response.status_code == 413
+        assert response.json()["detail"]["code"] == "video_request_too_large"
+        assert calls == ["POST"]
+
+
+def test_inline_heif_decodes_current_media_and_rejects_incomplete_image(tmp_path):
+    # Synthetic 320 x 320 single-color HEIC image encoded with local tooling.
+    encoded = (
+        "AAAAHGZ0eXBoZWljAAAAAG1pZjFoZWljbWlhZgAAAVdtZXRhAAAAAAAAACFoZGxyAAAAAAAAAABwaWN0AAAAAAAA"
+        "AAAAAAAAAAAAACJpbG9jAAAAAERAAAEAAQAAAAABewABAAAAAAAAAEAAAAAjaWluZgAAAAAAAQAAABVpbmZlAgAAAA"
+        "ABAABodmMxAAAAAA5waXRtAAAAAAABAAAA12lwcnAAAAC4aXBjbwAAAHlodmNDAQNwAAAAkAAAAAAAPPAA/P34+AAA"
+        "DwNgAAEAGEABDAH//wNwAAADAJAAAAMAAAMAPLoCQGEAAQAsQgEBA3AAAAMAkAAAAwAAAwA8oAoIBQWW6kkprm4CGg"
+        "wIAAADAMgAAAMACEBiAAEAB0QBwXKwYkAAAAATY29scm5jbHgAAQANAAaAAAAAFGlzcGUAAAAAAAABQAAAAUAAAAAQ"
+        "cGl4aQAAAAADCAgIAAAAF2lwbWEAAAAAAAAAAQABBIECAwQAAABIbWRhdAAAADwoAa8EkpaIMaD8zOb2f/YMGMX9"
+        "q9WvEdjOg/wgB0SooP8IITxh98CTD1TwAAu4hwAAAwAELAAAAwAAWMA="
+    )
+    raw = b64decode(encoded, validate=True)
+    media = [{"type": "image_url", "image_url": {"url": f"data:image/heic;base64,{encoded}"}}]
+
+    def upstream(request):
+        sent = json.loads(request.content)
+        assert sent["content"][0]["image_url"]["url"] == media[0]["image_url"]["url"]
+        return httpx.Response(200, json={"id": "provider-inline-heic"})
+
+    with _client(tmp_path, upstream) as client:
+        owner = _key(client, _register(client))
+        valid = client.post(TASKS_PATH, headers=owner, json={**PROMPT, "content": media})
+        assert valid.status_code == 200, valid.text
+        incomplete = b64encode(raw[:-30]).decode("ascii")
+        rejected = client.post(TASKS_PATH, headers=owner, json={**PROMPT, "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/heic;base64,{incomplete}"}},
+        ]})
+        assert rejected.status_code == 422, rejected.text
 
 
 def test_rejects_unknown_options_private_material_and_wrong_model_duration(tmp_path):

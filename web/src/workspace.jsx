@@ -398,7 +398,7 @@ function SetupGuide() {
             用本站业务 Key 设置 <code>API_KEY</code>，并为每次任务设置独立的 <code>REQUEST_ID</code>。
           </p>
         </div>
-        <a href="/#quickstart">查看接入指南</a>
+        <a href="/docs/">开发者文档</a>
       </div>
       <pre className="console-code" tabIndex={0}>
         <code>{example}</code>
@@ -689,7 +689,7 @@ export function Workspace({ session, onSessionEnded }) {
             </a>
           ))}
         </nav>
-        <a className="sidebar-docs" href="/#quickstart">
+        <a className="sidebar-docs" href="/docs/">
           开发者文档
         </a>
       </aside>
