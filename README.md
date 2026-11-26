@@ -217,7 +217,7 @@ cd backend
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
-前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。真实方舟联调、火山月账单样本核验和生产计费口径仍待确认。Native 支付、开票和公开站点 SEO 已暂停。 [工作计划](docs/WORK_PLAN.md)
+前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。测试站点已实测从公网 HTTPS 上传到方舟取件和 Seedance 2.5 生成。火山月账单样本核验和生产计费口径仍待确认。Native 支付、开票和公开站点 SEO 已暂停。 [工作计划](docs/WORK_PLAN.md)
 
 ## 许可证
 
