@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
 
     price = actions.add_parser("add-price", help="append a rate version")
     price.add_argument("--upstream-model", required=True)
-    price.add_argument("--resolution", required=True, choices=("480p", "720p", "1080p"))
+    price.add_argument("--resolution", required=True, choices=billing.RESOLUTIONS)
     price.add_argument("--video-input", required=True, choices=("yes", "no"))
     price.add_argument("--effective-at", required=True, type=_effective_at)
     price.add_argument("--yuan-per-million", required=True, type=_yuan_per_million)

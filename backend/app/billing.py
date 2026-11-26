@@ -5,61 +5,102 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 
-RESOLUTIONS = {"480p", "720p", "1080p"}
+RESOLUTIONS = ("480p", "720p", "1080p", "4k")
 TOKEN_UNIT = 1_000_000
 BASIS_POINTS = 10_000
 MAX_TOKENS = 10**12  # The maximum validated by the task result parser.
 SQLITE_MAX_INTEGER = 2**63 - 1
 MAX_UNIT_PRICE = SQLITE_MAX_INTEGER // (MAX_TOKENS // TOKEN_UNIT)
 
+_RESOLUTION_CHECK = f"resolution IN ({', '.join(repr(value) for value in RESOLUTIONS)})"
+_PRICE_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS video_prices (
+        id INTEGER PRIMARY KEY,
+        upstream_model TEXT NOT NULL,
+        resolution TEXT NOT NULL CHECK ({_RESOLUTION_CHECK}),
+        contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
+        effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
+        unit_price_micros_per_million INTEGER NOT NULL CHECK (unit_price_micros_per_million >= 0),
+        source TEXT NOT NULL,
+        UNIQUE(upstream_model, resolution, contains_video_input, effective_at)
+    )
+"""
+_CHARGE_SCHEMA = f"""
+    CREATE TABLE IF NOT EXISTS video_charges (
+        task_id TEXT PRIMARY KEY REFERENCES video_tasks(id),
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        key_id TEXT NOT NULL REFERENCES business_keys(id),
+        model TEXT NOT NULL,
+        upstream_model TEXT,
+        resolution TEXT CHECK ({_RESOLUTION_CHECK}),
+        contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
+        output_tokens INTEGER CHECK (output_tokens >= 0),
+        status TEXT NOT NULL CHECK (status IN ('unbilled', 'pending', 'priced')),
+        pending_reason TEXT,
+        price_id INTEGER REFERENCES video_prices(id),
+        terms_id INTEGER REFERENCES project_billing_terms(id),
+        unit_price_micros_per_million INTEGER CHECK (unit_price_micros_per_million >= 0),
+        payable_bps INTEGER CHECK (payable_bps BETWEEN 0 AND 10000),
+        list_amount_micros INTEGER CHECK (list_amount_micros >= 0),
+        amount_micros INTEGER CHECK (amount_micros >= 0),
+        task_created_at TEXT NOT NULL,
+        settled_at TEXT,
+        priced_at TEXT,
+        CHECK ((status = 'pending') = (pending_reason IS NOT NULL)),
+        CHECK ((status = 'priced') = (priced_at IS NOT NULL)),
+        CHECK ((status = 'priced') = (amount_micros IS NOT NULL AND list_amount_micros IS NOT NULL))
+    )
+"""
+
+
+def _migrate_4k_resolution(connection: sqlite3.Connection) -> None:
+    tables = connection.execute("""
+        SELECT sql FROM sqlite_schema WHERE type = 'table' AND name IN ('video_prices', 'video_charges')
+    """).fetchall()
+    if all("'4k'" in row[0] for row in tables):
+        return
+
+    schema_objects = connection.execute("""
+        SELECT sql FROM sqlite_schema
+        WHERE tbl_name IN ('video_prices', 'video_charges') AND type IN ('index', 'trigger') AND sql IS NOT NULL
+        ORDER BY rowid
+    """).fetchall()
+    # Renaming the child first keeps its old price references valid until both tables are copied.
+    connection.execute("ALTER TABLE video_charges RENAME TO video_charges_before_4k")
+    connection.execute("ALTER TABLE video_prices RENAME TO video_prices_before_4k")
+    connection.execute(_PRICE_SCHEMA)
+    connection.execute(_CHARGE_SCHEMA)
+    # Only the resolution CHECK changes. Preserve column order, primary keys and all charge values.
+    connection.execute("INSERT INTO video_prices SELECT * FROM video_prices_before_4k")
+    connection.execute("INSERT INTO video_charges SELECT * FROM video_charges_before_4k")
+    connection.execute("DROP TABLE video_charges_before_4k")
+    connection.execute("DROP TABLE video_prices_before_4k")
+    for (sql,) in schema_objects:
+        connection.execute(sql)
+
 
 def initialize(connection: sqlite3.Connection) -> None:
-    connection.executescript("""
-        CREATE TABLE IF NOT EXISTS video_prices (
-            id INTEGER PRIMARY KEY,
-            upstream_model TEXT NOT NULL,
-            resolution TEXT NOT NULL CHECK (resolution IN ('480p', '720p', '1080p')),
-            contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
-            effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
-            unit_price_micros_per_million INTEGER NOT NULL CHECK (unit_price_micros_per_million >= 0),
-            source TEXT NOT NULL,
-            UNIQUE(upstream_model, resolution, contains_video_input, effective_at)
-        );
-        CREATE TABLE IF NOT EXISTS project_billing_terms (
-            id INTEGER PRIMARY KEY,
-            project_id TEXT NOT NULL REFERENCES projects(id),
-            effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
-            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
-            payable_bps INTEGER NOT NULL CHECK (payable_bps BETWEEN 0 AND 10000),
-            UNIQUE(project_id, effective_at)
-        );
-        CREATE TABLE IF NOT EXISTS video_charges (
-            task_id TEXT PRIMARY KEY REFERENCES video_tasks(id),
-            project_id TEXT NOT NULL REFERENCES projects(id),
-            key_id TEXT NOT NULL REFERENCES business_keys(id),
-            model TEXT NOT NULL,
-            upstream_model TEXT,
-            resolution TEXT CHECK (resolution IN ('480p', '720p', '1080p')),
-            contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
-            output_tokens INTEGER CHECK (output_tokens >= 0),
-            status TEXT NOT NULL CHECK (status IN ('unbilled', 'pending', 'priced')),
-            pending_reason TEXT,
-            price_id INTEGER REFERENCES video_prices(id),
-            terms_id INTEGER REFERENCES project_billing_terms(id),
-            unit_price_micros_per_million INTEGER CHECK (unit_price_micros_per_million >= 0),
-            payable_bps INTEGER CHECK (payable_bps BETWEEN 0 AND 10000),
-            list_amount_micros INTEGER CHECK (list_amount_micros >= 0),
-            amount_micros INTEGER CHECK (amount_micros >= 0),
-            task_created_at TEXT NOT NULL,
-            settled_at TEXT,
-            priced_at TEXT,
-            CHECK ((status = 'pending') = (pending_reason IS NOT NULL)),
-            CHECK ((status = 'priced') = (priced_at IS NOT NULL)),
-            CHECK ((status = 'priced') = (amount_micros IS NOT NULL AND list_amount_micros IS NOT NULL))
-        );
-        CREATE INDEX IF NOT EXISTS video_charges_project_settled ON video_charges(project_id, settled_at, task_id);
-        CREATE INDEX IF NOT EXISTS video_charges_project_created ON video_charges(project_id, task_created_at, task_id);
-    """)
+    with connection:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(_PRICE_SCHEMA)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS project_billing_terms (
+                id INTEGER PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id),
+                effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
+                enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+                payable_bps INTEGER NOT NULL CHECK (payable_bps BETWEEN 0 AND 10000),
+                UNIQUE(project_id, effective_at)
+            )
+        """)
+        connection.execute(_CHARGE_SCHEMA)
+        _migrate_4k_resolution(connection)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS video_charges_project_settled ON video_charges(project_id, settled_at, task_id)
+        """)
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS video_charges_project_created ON video_charges(project_id, task_created_at, task_id)
+        """)
 
 
 def _check_integer(value: int, maximum: int, name: str) -> None:
@@ -125,6 +166,8 @@ def _output_resolution(result_json: str) -> str | None:
     except (TypeError, ValueError):
         return None
     value = result.get("resolution") if isinstance(result, dict) else None
+    if value == "4K":
+        return "4k"
     return value if isinstance(value, str) and value in RESOLUTIONS else None
 
 

@@ -126,6 +126,25 @@ test('rejects a malformed capability response for an advertised video model', as
   }
 });
 
+test('discovers and submits the 4K resolution using the canonical API value', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    if (path === '/v1/models') return json({ data: [{ id: model, video: {
+      max_duration: 30, resolutions: ['480p', '720p', '1080p', '4k'], audio_only: true,
+      max_reference_images: 9, max_reference_videos: 3, max_reference_audios: 3,
+    } }] });
+    assert.equal(path, taskPath);
+    assert.deepEqual(JSON.parse(options.body), {
+      model, content: [{ type: 'text', text: prompt }], duration: 4, resolution: '4k',
+    });
+    return json({ id: taskId });
+  });
+
+  const [standard] = await listVideoModels(key);
+  assert.deepEqual(standard.resolutions, ['480p', '720p', '1080p', '4k']);
+  const run = createVideoRun({ model: standard.id, prompt, duration: 4, resolution: '4k', media: [] });
+  assert.equal(await submitVideoRun(key, run, new AbortController().signal, () => {}), taskId);
+});
+
 test('resumes a registered local reference after a failed asset status read without duplicating writes', async (t) => {
   const controller = new AbortController();
   const run = makeRun([{ kind: 'Image', file: new File(['fixture'], 'image.png') }]);

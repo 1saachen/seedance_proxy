@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 TASKS_PATH = "/api/v3/contents/generations/tasks"
 VARIANT_RESOLUTIONS = ("480p", "720p")
-STANDARD_RESOLUTIONS = (*VARIANT_RESOLUTIONS, "1080p")
+STANDARD_RESOLUTIONS = (*VARIANT_RESOLUTIONS, "1080p", "4k")
 
 
 @dataclass(frozen=True)
@@ -171,7 +171,7 @@ class VideoRequest(ModelInput):
     model: str = Field(min_length=1, max_length=80)
     content: list[Content] = Field(min_length=1, max_length=MAX_CONTENT_ITEMS)
     duration: int | None = None
-    resolution: Literal["480p", "720p", "1080p"] | None = None
+    resolution: Literal["480p", "720p", "1080p", "4k"] | None = None
     ratio: Literal["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"] | None = None
     seed: int | None = Field(default=None, ge=-1, le=2**32 - 1)
     generate_audio: bool | None = None
@@ -360,10 +360,15 @@ def _replay(row: sqlite3.Row, fingerprint: str) -> dict:
 
 def _provider_result(data: dict, status: str) -> tuple[dict, int | None]:
     result = {}
-    for field, allowed in (("resolution", RESOLUTIONS), ("ratio", RATIOS)):
-        value = data.get(field)
-        if isinstance(value, str) and value in allowed:
-            result[field] = value
+    resolution = data.get("resolution")
+    if isinstance(resolution, str):
+        if resolution == "4K":
+            resolution = "4k"
+        if resolution in RESOLUTIONS:
+            result["resolution"] = resolution
+    ratio = data.get("ratio")
+    if isinstance(ratio, str) and ratio in RATIOS:
+        result["ratio"] = ratio
     duration = data.get("duration")
     if type(duration) is int and 0 < duration <= 30:
         result["duration"] = duration

@@ -118,6 +118,59 @@ def _media_content(media, count):
     ]
 
 
+@pytest.mark.parametrize("alias, upstream_model, provider_resolution", [
+    ("doubao-seedance-2.5", "doubao-seedance-2-5-260628", "4k"),
+    ("doubao-seedance-2.0", "doubao-seedance-2-0-260128", "4K"),
+])
+def test_standard_models_create_and_settle_4k_tasks(tmp_path, alias, upstream_model, provider_resolution):
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        if request.method == "POST":
+            assert request.url.path == TASKS_PATH
+            payload = json.loads(request.content)
+            assert payload["model"] == upstream_model
+            assert payload["resolution"] == "4k"
+            return httpx.Response(200, json={"id": "provider-4k"})
+        assert request.url.path == f"{TASKS_PATH}/provider-4k"
+        return httpx.Response(200, json={
+            "id": "provider-4k", "status": "succeeded", "resolution": provider_resolution,
+            "content": {"video_url": "https://cdn.example.com/4k.mp4"},
+            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+            "usage": {"completion_tokens": 120},
+        })
+
+    with _client(tmp_path, upstream) as client:
+        headers = _key(client, _register(client))
+        models = client.get("/v1/models", headers=headers).json()["data"]
+        model = next(model for model in models if model["id"] == alias)
+        assert model["video"]["resolutions"] == ["480p", "720p", "1080p", "4k"]
+
+        project_id = client.get("/api/customer/me").json()["customer"]["projectId"]
+        with client.app.state.db.connect() as connection:
+            add_project_terms(connection, project_id=project_id, effective_at=0, enabled=True, payable_bps=10_000)
+            add_price(
+                connection, upstream_model=upstream_model, resolution="4k", contains_video_input=False,
+                effective_at=0, unit_price_micros_per_million=7_000_000, source="test",
+            )
+        created = client.post(TASKS_PATH, headers=headers, json={**PROMPT, "model": alias, "resolution": "4k"})
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        task = client.get(f"{TASKS_PATH}/{task_id}", headers=headers).json()
+        assert task == {
+            "id": task_id, "model": alias, "status": "succeeded", "resolution": "4k",
+            "content": {"video_url": "https://cdn.example.com/4k.mp4"},
+            "usage": {"completion_tokens": 120},
+        }
+        assert calls == ["POST", "GET"]
+        with client.app.state.db.connect() as connection:
+            charge = connection.execute(
+                "SELECT resolution, status, amount_micros FROM video_charges WHERE task_id = ?", (task_id,),
+            ).fetchone()
+            assert tuple(charge) == ("4k", "priced", 840)
+
+
 @pytest.mark.parametrize("alias, upstream_model, maximum, audio_only, limits", VARIANTS)
 def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
     tmp_path, alias, upstream_model, maximum, audio_only, limits,
@@ -164,6 +217,7 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
 
         invalid = [
             {**body, "resolution": "1080p"},
+            {**body, "resolution": "4k"},
             {**body, "duration": maximum + 1},
             *({**body, "content": _media_content(media, limit + 1)} for media, limit in media_limits.items()),
         ]

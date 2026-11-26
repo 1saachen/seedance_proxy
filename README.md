@@ -55,13 +55,15 @@ pnpm dev
 
 | `model` 业务别名 | 方舟模型版本 | 生成时长 | 输出分辨率 |
 | --- | --- | --- | --- |
-| `doubao-seedance-2.5` | `doubao-seedance-2-5-260628` | 4–30 秒 | 480p、720p、1080p |
+| `doubao-seedance-2.5` | `doubao-seedance-2-5-260628` | 4–30 秒 | 480p、720p、1080p、4K |
 | `doubao-seedance-2.5-flash` | `doubao-seedance-2-5-flash-261115` | 4–30 秒 | 480p、720p |
-| `doubao-seedance-2.0` | `doubao-seedance-2-0-260128` | 4–15 秒 | 480p、720p、1080p |
+| `doubao-seedance-2.0` | `doubao-seedance-2-0-260128` | 4–15 秒 | 480p、720p、1080p、4K |
 | `doubao-seedance-2.0-fast` | `doubao-seedance-2-0-fast-260128` | 4–15 秒 | 480p、720p |
 | `doubao-seedance-2.0-mini` | `doubao-seedance-2-0-mini-260615` | 4–15 秒 | 480p、720p |
 
-`GET /v1/models` 的 `data[].id` 用于提交任务。`data[].video` 提供 `max_duration`（秒）、`resolutions`、`audio_only` 和 `max_reference_images`、`max_reference_videos`、`max_reference_audios`。`frame_ratio_adaptive` 为 `true` 时，首帧或首尾帧生成只接受省略 `ratio` 或设为 `adaptive`。单独输入参考音频适用于 2.5 和 2.5 Flash。2.0 系列使用参考音频时要一起提供参考图片或视频。API 也可将 `duration` 设为 `-1` 交由方舟选择时长。Draft、4K、视频编辑、延长和取消接口仍待接入。
+`GET /v1/models` 的 `data[].id` 用于提交任务。`data[].video` 提供 `max_duration`（秒）、`resolutions`、`audio_only` 和 `max_reference_images`、`max_reference_videos`、`max_reference_audios`。`frame_ratio_adaptive` 为 `true` 时，首帧或首尾帧生成只接受省略 `ratio` 或设为 `adaptive`。单独输入参考音频适用于 2.5 和 2.5 Flash。2.0 系列使用参考音频时要一起提供参考图片或视频。API 也可将 `duration` 设为 `-1` 交由方舟选择时长。Draft、视频编辑、视频延长和取消接口仍待接入。
+
+标准版的 4K 请求使用 `"resolution": "4k"`，实际分辨率由任务查询返回。方舟 4K 视频使用 10 位 H.265（HEVC）编码。浏览器无法预览时，可以下载后用兼容的本地播放器打开。 [方舟创建视频任务](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)
 
 本地开发可以在不配置官方凭证的情况下验证注册、业务 Key 和客户页面。配置服务器环境变量 `SEEDANCE_ARK_API_KEY` 后，视频请求会发往火山并可能产生费用。自动测试使用 `MockTransport` 和临时 SQLite。
 
@@ -151,7 +153,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 ## 逐次用量计价
 
-成功的 Seedance 视频任务按任务 ID 归集一次，使用方舟查询响应的 `usage.completion_tokens`、实际输出分辨率（480p、720p、1080p）、提交时的确切方舟模型版本以及是否含 `video_url` 输入。方舟按实际输出分辨率和视频输入区分每百万 Token 单价，返回的 `completion_tokens` 已反映适用的最低用量。 [方舟模型价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh) · [方舟任务查询](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)
+成功的 Seedance 视频任务按任务 ID 归集一次，使用方舟查询响应的 `usage.completion_tokens`、实际输出分辨率（480p、720p、1080p、4K）、提交时的确切方舟模型版本以及是否含 `video_url` 输入。方舟按实际输出分辨率和视频输入区分每百万 Token 单价，返回的 `completion_tokens` 已反映适用的最低用量。 [方舟模型价格](https://docs.volcengine.com/docs/ark/model-pricing?lang=zh&redirect=1) · [方舟任务查询](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)
 
 项目默认未计费。按任务创建时间（UTC）匹配已生效的客户价目和项目计费条款，价目由运营录入。已开通项目的成功任务缺少真实用量、计价条件、适用价目或任务结束时间时进入待计价。项目折扣以应付比例的基点表达，`8000` 表示按原价的 80% 支付（8 折）。折前和折后金额各自四舍五入到整数微元，响应以人民币元六位小数的字符串返回。
 
@@ -159,7 +161,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 ### 配置价目与项目折扣
 
-运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。2.5 Flash、2.0 Fast 和 2.0 Mini 的价目按各自的方舟模型版本录入，包含 480p 和 720p 的有视频输入、无视频输入档位。
+运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。标准版的 4K 价目使用 `--resolution 4k`。2.5 Flash、2.0 Fast 和 2.0 Mini 的价目按各自的方舟模型版本录入，包含 480p 和 720p 的有视频输入、无视频输入档位。
 
 ```powershell
 ..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" add-price `

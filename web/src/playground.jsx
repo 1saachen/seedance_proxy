@@ -322,7 +322,7 @@ export function VideoOutput({ url, taskId }) {
   return (
     <>
       <video src={url} controls playsInline preload="metadata" aria-label="生成视频" onError={() => setPlaybackError(true)} />
-      {playbackError && <p className="playground-preview-message" role="alert">暂时无法播放。视频链接可能已过期。</p>}
+      {playbackError && <p className="playground-preview-message" role="alert">暂时无法播放。链接可能已过期，也可能是浏览器不支持视频编码。可尝试下载到本地播放。</p>}
       <div className="playground-preview-actions row-actions">
         <button type="button" className="button primary" onClick={downloadVideo} disabled={downloadNotice === '正在下载…'}>下载视频</button>
         <a className="button secondary" href={url} target="_blank" rel="noreferrer">打开视频</a>
@@ -516,8 +516,9 @@ export function Playground({ active = true, csrfToken, onExpired, videoKey, setV
                 <div className="playground-field">
                   <label htmlFor="playground-resolution">分辨率</label>
                   <select id="playground-resolution" value={resolution} disabled={!model} onChange={(event) => setChosenResolution(event.target.value)}>
-                    {resolutions.map((item) => <option key={item}>{item}</option>)}
+                    {resolutions.map((item) => <option key={item} value={item}>{item === '4k' ? '4K' : item}</option>)}
                   </select>
+                  {resolution === '4k' && <p className="playground-hint">4K 视频使用 H.265 编码。若浏览器无法预览，可以下载后用本地播放器打开。</p>}
                 </div>
               </div>
               <div className="playground-submit">

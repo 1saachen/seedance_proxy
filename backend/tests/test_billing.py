@@ -6,15 +6,19 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sqlite3
+import sys
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
-from app import billing
+from app import billing, billing_cli, statements
 from app.accounts import initialize as initialize_accounts
 from app.config import Settings
+from app.db import Database
 from app.main import create_app
 from app.model_api import TASKS_PATH
+from app.model_api import initialize as initialize_video_tasks
 from app.statements import BEIJING
 
 
@@ -393,3 +397,147 @@ def test_repeated_migration_preserves_legacy_tasks_and_does_not_charge_existing_
             assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert _charge(client, "vid_legacy") == initial_charge
         assert not ark.submissions and not ark.queries
+
+
+@pytest.fixture
+def pre_4k_billing_database(tmp_path: Path) -> tuple[Database, dict]:
+    database = Database(tmp_path / "pre-4k.sqlite")
+    with database.connect() as connection:
+        initialize_accounts(connection)
+        initialize_video_tasks(connection)
+        # This is the billing schema before the 4K migration.
+        connection.executescript("""
+        CREATE TABLE IF NOT EXISTS video_prices (
+            id INTEGER PRIMARY KEY,
+            upstream_model TEXT NOT NULL,
+            resolution TEXT NOT NULL CHECK (resolution IN ('480p', '720p', '1080p')),
+            contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
+            effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
+            unit_price_micros_per_million INTEGER NOT NULL CHECK (unit_price_micros_per_million >= 0),
+            source TEXT NOT NULL,
+            UNIQUE(upstream_model, resolution, contains_video_input, effective_at)
+        );
+        CREATE TABLE IF NOT EXISTS project_billing_terms (
+            id INTEGER PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            effective_at INTEGER NOT NULL CHECK (effective_at >= 0),
+            enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+            payable_bps INTEGER NOT NULL CHECK (payable_bps BETWEEN 0 AND 10000),
+            UNIQUE(project_id, effective_at)
+        );
+        CREATE TABLE IF NOT EXISTS video_charges (
+            task_id TEXT PRIMARY KEY REFERENCES video_tasks(id),
+            project_id TEXT NOT NULL REFERENCES projects(id),
+            key_id TEXT NOT NULL REFERENCES business_keys(id),
+            model TEXT NOT NULL,
+            upstream_model TEXT,
+            resolution TEXT CHECK (resolution IN ('480p', '720p', '1080p')),
+            contains_video_input INTEGER NOT NULL CHECK (contains_video_input IN (0, 1)),
+            output_tokens INTEGER CHECK (output_tokens >= 0),
+            status TEXT NOT NULL CHECK (status IN ('unbilled', 'pending', 'priced')),
+            pending_reason TEXT,
+            price_id INTEGER REFERENCES video_prices(id),
+            terms_id INTEGER REFERENCES project_billing_terms(id),
+            unit_price_micros_per_million INTEGER CHECK (unit_price_micros_per_million >= 0),
+            payable_bps INTEGER CHECK (payable_bps BETWEEN 0 AND 10000),
+            list_amount_micros INTEGER CHECK (list_amount_micros >= 0),
+            amount_micros INTEGER CHECK (amount_micros >= 0),
+            task_created_at TEXT NOT NULL,
+            settled_at TEXT,
+            priced_at TEXT,
+            CHECK ((status = 'pending') = (pending_reason IS NOT NULL)),
+            CHECK ((status = 'priced') = (priced_at IS NOT NULL)),
+            CHECK ((status = 'priced') = (amount_micros IS NOT NULL AND list_amount_micros IS NOT NULL))
+        );
+        CREATE INDEX IF NOT EXISTS video_charges_project_settled ON video_charges(project_id, settled_at, task_id);
+        CREATE INDEX IF NOT EXISTS video_charges_project_created ON video_charges(project_id, task_created_at, task_id);
+        """)
+        statements.initialize(connection)
+        connection.executescript("""
+            INSERT INTO projects VALUES ('legacy-project', '2025-01-01 00:00:00');
+            INSERT INTO business_keys VALUES (
+                'legacy-key', 'legacy-project', 'Legacy', 'test', 'legacy-hash', '2025-01-01 00:00:00', NULL
+            );
+            INSERT INTO video_tasks (
+                id, project_id, key_id, request_hash, model, upstream_model, status, result_json,
+                requested_resolution, contains_video_input, output_tokens, created_at, settled_at
+            ) VALUES (
+                'vid_legacy_paid', 'legacy-project', 'legacy-key', 'synthetic',
+                'doubao-seedance-2.5', 'doubao-seedance-2-5-260628', 'succeeded', '{"resolution":"720p"}',
+                '720p', 0, 10000, '2025-01-02 00:00:00', '2025-01-02 00:01:00'
+            );
+            INSERT INTO video_prices VALUES (32, 'doubao-seedance-2-5-260628', '720p', 0, 0, 3000000, 'Legacy price');
+            INSERT INTO project_billing_terms VALUES (7, 'legacy-project', 0, 1, 8000);
+        """)
+        billing.record_task(connection, connection.execute("SELECT * FROM video_tasks").fetchone())
+        frozen = statements.confirm_statement(connection, "legacy-project", "2025-01", now=datetime(2025, 3, 1))
+        assert frozen["items"][0]["priceVersion"] == 32
+    return database, frozen
+
+
+def test_4k_migration_keeps_prices_and_frozen_statements_and_settles_a_new_rate(
+    pre_4k_billing_database, monkeypatch, capsys,
+) -> None:
+    database, frozen = pre_4k_billing_database
+    with database.connect() as connection:
+        old_charge = dict(connection.execute("SELECT * FROM video_charges").fetchone())
+        for _ in range(2):
+            billing.initialize(connection)
+            assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+            assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert dict(connection.execute("SELECT * FROM video_charges").fetchone()) == old_charge
+            assert statements.confirmed_statement(connection, "legacy-project", frozen["id"]) == frozen
+            index_names = {row[1] for row in connection.execute("PRAGMA index_list(video_charges)")}
+            assert {
+                "video_charges_project_settled", "video_charges_project_created", "video_charges_statement_scope",
+            } <= index_names
+
+        # A reconciliation of previously normalized or raw upstream 4K metadata uses the 4K rate only.
+        connection.execute("""
+            INSERT INTO video_tasks (
+                id, project_id, key_id, request_hash, model, upstream_model, status, result_json,
+                requested_resolution, contains_video_input, output_tokens, created_at, settled_at
+            ) VALUES (
+                'vid_4k', 'legacy-project', 'legacy-key', 'synthetic', ?, ?, 'succeeded', '{"resolution":"4K"}',
+                '4k', 0, 20000, '2025-02-02 00:00:00', '2025-02-02 00:01:00'
+            )
+        """, (MODEL, UPSTREAM_MODEL))
+        assert billing.reconcile_batch(connection)[1] == 1
+        pending = connection.execute("SELECT * FROM video_charges WHERE task_id = 'vid_4k'").fetchone()
+        assert (pending["resolution"], pending["status"], pending["pending_reason"]) == ("4k", "pending", "missing_price")
+
+    monkeypatch.setattr(sys, "argv", [
+        "billing-cli", "--database", str(database.path), "add-price",
+        "--upstream-model", UPSTREAM_MODEL, "--resolution", "4k", "--video-input", "no",
+        "--effective-at", "2025-01-01T00:00:00+00:00", "--yuan-per-million", "9", "--source", "Synthetic 4K price",
+    ])
+    assert billing_cli.main() == 0
+    price_version = json.loads(capsys.readouterr().out)["priceVersion"]
+    assert price_version > 32
+    with database.connect() as connection:
+        assert billing.reconcile_batch(connection)[1] == 1
+        priced = connection.execute("SELECT * FROM video_charges WHERE task_id = 'vid_4k'").fetchone()
+        assert (priced["status"], priced["price_id"], priced["amount_micros"]) == ("priced", price_version, 144000)
+        assert billing.reconcile_batch(connection)[1] == 0
+        assert statements.confirmed_statement(connection, "legacy-project", frozen["id"]) == frozen
+
+
+def test_4k_migration_rolls_back_after_a_copy_failure(pre_4k_billing_database) -> None:
+    database, frozen = pre_4k_billing_database
+    with database.connect() as connection:
+        old_schemas = connection.execute("SELECT * FROM sqlite_schema ORDER BY name").fetchall()
+        old_charge = connection.execute("SELECT * FROM video_charges").fetchone()
+
+        def fail_charges_copy(action, table, *_):
+            return sqlite3.SQLITE_DENY if action == sqlite3.SQLITE_INSERT and table == "video_charges" else sqlite3.SQLITE_OK
+
+        connection.set_authorizer(fail_charges_copy)
+        with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
+            billing.initialize(connection)
+        connection.set_authorizer(None)
+        assert connection.execute("SELECT * FROM sqlite_schema ORDER BY name").fetchall() == old_schemas
+        assert connection.execute("SELECT * FROM video_charges").fetchone() == old_charge
+        assert statements.confirmed_statement(connection, "legacy-project", frozen["id"]) == frozen
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+        billing.initialize(connection)
+        assert connection.execute("SELECT * FROM video_charges").fetchone() == old_charge
