@@ -98,13 +98,13 @@ function Overview({ customer, usage, month }) {
     <>
       <section className="workspace-banner" aria-labelledby="overview-heading">
         <div>
-          <p className="workspace-caption">客户项目</p>
           <h2 id="overview-heading">Seedance 视频生成</h2>
-          <p>创建业务 Key，查看当前可用模型，然后提交第一个视频任务。</p>
+          <p>直接体验视频生成，或使用项目 API Key 接入你的应用。</p>
         </div>
-        <a className="button light" href="#api">
-          开始 API 接入
-        </a>
+        <div className="workspace-banner-actions">
+          <a className="button light" href="#playground">进入视频体验</a>
+          <a className="button secondary" href="#api">查看 API 接入</a>
+        </div>
       </section>
       <section className="panel" aria-labelledby="month-heading">
         <div className="panel-head">
@@ -669,16 +669,8 @@ export function Workspace({ session, onSessionEnded }) {
       >
         跳到正文
       </a>
-      <header className="workspace-header">
-        <Wordmark />
-        <div className="account-menu">
-          <span>{session.customer.email}</span>
-          <button className="button secondary" onClick={logout} disabled={loggingOut}>
-            {loggingOut ? '正在退出…' : '退出登录'}
-          </button>
-        </div>
-      </header>
       <aside className="workspace-sidebar">
+        <Wordmark />
         <nav aria-label="客户工作台">
           {sections.map((item) => (
             <a key={item.id} href={`#${item.id}`} aria-current={section.id === item.id ? 'page' : undefined}>
@@ -688,11 +680,21 @@ export function Workspace({ session, onSessionEnded }) {
               {item.label}
             </a>
           ))}
+          <a className="sidebar-docs" href="/docs/">
+            <span className="nav-mark" aria-hidden="true">↗</span>
+            开发者文档
+          </a>
         </nav>
-        <a className="sidebar-docs" href="/docs/">
-          开发者文档
-        </a>
       </aside>
+      <header className="workspace-header">
+        <span className="workspace-context">客户工作台</span>
+        <div className="account-menu">
+          <span>{session.customer.email}</span>
+          <button className="button secondary" onClick={logout} disabled={loggingOut}>
+            {loggingOut ? '正在退出…' : '退出登录'}
+          </button>
+        </div>
+      </header>
       <main id="workspace-content" className="workspace-main" tabIndex={-1}>
         <div className="page-heading">
           <h1>{section.label}</h1>

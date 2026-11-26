@@ -1,65 +1,96 @@
 .docs-page {
+  --docs-header-height: 4rem;
+  --docs-anchor-offset: calc(var(--docs-header-height) + 1.5rem);
+  --docs-ink: #101726;
+  --docs-tint: #f3f5fa;
+  --docs-accent: #444fc1;
+  --docs-teal: #007d74;
   background: var(--paper);
 }
 
+.docs-page .skip-link { z-index: 10; }
+
 .docs-masthead {
+  position: sticky;
+  z-index: 5;
+  top: 0;
   border-bottom: 1px solid var(--line);
-  background: var(--fog);
+  background: var(--docs-tint);
 }
 
 .docs-masthead .public-header {
-  min-height: 4.25rem;
+  min-height: var(--docs-header-height);
+  padding-block: 0;
   border: 0;
+}
+
+.docs-masthead .public-nav a:not(.button) {
+  color: var(--docs-ink);
+  font-size: 0.9rem;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.docs-masthead .public-nav a:not(.button):hover {
+  color: var(--docs-accent);
+  text-decoration: underline;
 }
 
 .docs-layout {
   display: grid;
   grid-template-columns: 13rem minmax(0, 1fr);
-  gap: clamp(1.5rem, 5vw, 4rem);
+  gap: clamp(1.5rem, 4vw, 3.75rem);
 }
 
 .docs-toc {
   position: sticky;
-  top: 0;
+  top: var(--docs-header-height);
   align-self: start;
-  max-height: 100vh;
-  overflow-y: auto;
-  padding: 2.25rem 1rem 2.25rem 0;
+  max-height: calc(100vh - var(--docs-header-height));
+  overflow: auto;
+  padding: 2rem 0.85rem 2rem 0;
   border-right: 1px solid var(--line);
 }
 
 .docs-toc h2 {
-  margin-bottom: 0.8rem;
-  color: var(--navy);
-  font-size: 0.92rem;
+  margin: 0 0.65rem 0.7rem;
+  color: var(--docs-ink);
+  font-size: 0.9rem;
+  font-weight: 700;
 }
 
 .docs-toc ul {
   display: grid;
-  gap: 0.18rem;
-  padding: 0;
+  gap: 0.15rem;
+  padding: 0.15rem;
   margin: 0;
   list-style: none;
 }
 
 .docs-toc a {
   display: block;
-  padding: 0.35rem 0.45rem;
+  min-height: 2.25rem;
+  padding: 0.42rem 0.5rem;
+  border-left: 2px solid transparent;
   border-radius: 0.3rem;
   color: var(--muted);
+  font-size: 0.9rem;
   text-decoration: none;
 }
 
 .docs-toc a:hover,
 .docs-toc a:focus-visible {
-  background: var(--fog);
-  color: var(--navy);
+  border-left-color: var(--docs-accent);
+  background: var(--docs-tint);
+  color: var(--docs-accent);
 }
 
+.docs-toc a:focus-visible { outline-offset: -2px; }
+
 .docs-main {
-  max-width: 62rem;
-  padding: clamp(2rem, 5vw, 4rem) 0;
   min-width: 0;
+  max-width: 62rem;
+  padding: clamp(1.8rem, 4vw, 3.25rem) 0 3.25rem;
   color: var(--text);
 }
 
@@ -67,47 +98,58 @@
   margin-block: 0;
 }
 
-.docs-main :where(h1, h2, h3, h4) { color: var(--navy); }
-.docs-main :where(section, h3) { scroll-margin-top: 1.5rem; }
+.docs-main :where(h1, h2, h3, h4) { color: var(--docs-ink); }
+.docs-main,
+.docs-main :where(section, h3) { scroll-margin-top: var(--docs-anchor-offset); }
 .docs-main :where(p, li) { max-width: 74ch; }
-.docs-main > header h1 { font-size: clamp(2rem, 4.6vw, 3.45rem); }
-.docs-main > header p { margin-top: 0.95rem; color: var(--muted); font-size: 1.05rem; }
-.docs-main > section { margin-top: 2.6rem; padding-top: 1.65rem; border-top: 1px solid var(--line); }
+.docs-main > header h1 { font-size: clamp(2rem, 4.2vw, 3.15rem); }
+.docs-main > header p { margin-top: 0.65rem; color: var(--muted); font-size: 1.03rem; }
+.docs-main > section { margin-top: 2.4rem; padding-top: 1.6rem; border-top: 1px solid var(--line); }
+.docs-main > section:target { border-top-color: var(--docs-accent); }
 .docs-main h2 { font-size: clamp(1.45rem, 3vw, 1.85rem); }
 .docs-main h3 { font-size: 1.18rem; margin-top: 1.7rem; }
 .docs-main h4 { font-size: 1.04rem; margin-top: 1.2rem; }
-.docs-main :where(p, ul, ol, dl, figure, details, .docs-table, .docs-note) { margin-top: 0.75rem; }
-.docs-main :where(ul, ol) { padding-inline-start: 1.6rem; }
+.docs-main :where(p, ul, ol, dl, figure, details, .docs-table, .docs-note) { margin-top: 0.82rem; }
+.docs-main :where(ul, ol) { padding-inline-start: 1.45rem; }
 .docs-main li + li { margin-top: 0.32rem; }
 .docs-main code { overflow-wrap: anywhere; font-size: 0.9em; }
+.docs-main :where(p, li, td) > code { color: var(--docs-ink); }
+.docs-main :where(a, [tabindex], summary):focus-visible { outline-color: var(--docs-accent); }
 
 .docs-route {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 0.55rem;
   width: fit-content;
   max-width: 100%;
-  padding: 0.45rem 0.7rem;
-  border-left: 3px solid var(--blue);
-  border-radius: 0 0.35rem 0.35rem 0;
-  background: var(--fog);
-  color: var(--navy);
+  padding: 0.35rem 0.65rem 0.35rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  background: var(--docs-tint);
 }
 
-.docs-route strong { font: 700 0.79rem var(--mono); }
+.docs-route strong {
+  padding: 0.25rem 0.38rem;
+  border-radius: 0.28rem;
+  color: var(--docs-accent);
+  background: #e8ebfd;
+  font: 700 0.76rem var(--mono);
+}
 
 .docs-note {
   max-width: 74ch;
-  padding: 0.7rem 1rem;
-  border-left: 3px solid var(--blue);
-  background: var(--fog);
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--docs-teal);
+  border-radius: 0 0.5rem 0.5rem 0;
+  background: #eef8f7;
 }
 
 .docs-table {
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 0.48rem;
+  border-radius: 0.6rem;
+  scrollbar-color: #a6afc4 var(--docs-tint);
 }
 
 .docs-table table {
@@ -115,19 +157,20 @@
   min-width: 33rem;
   border-collapse: collapse;
   text-align: left;
-  font-size: 0.94rem;
+  font-size: 0.92rem;
 }
 
-.docs-table :where(th, td) { padding: 0.64rem 0.82rem; vertical-align: top; }
-.docs-table th { background: var(--fog); color: var(--navy); }
-.docs-table tbody tr + tr { border-top: 1px solid var(--line); }
+.docs-table :where(th, td) { padding: 0.68rem 0.82rem; vertical-align: top; }
+.docs-table th { background: var(--docs-tint); color: var(--docs-ink); }
+.docs-table tbody tr { border-top: 1px solid var(--line); }
+.docs-table tbody tr:nth-child(even) { background: #f9fafc; }
 .docs-table td:first-child { min-width: 7rem; }
 
 .docs-example {
-  border: 1px solid var(--line);
-  border-radius: 0.48rem;
-  background: var(--navy);
-  color: #f5f8fd;
+  border: 1px solid #28354b;
+  border-radius: 0.6rem;
+  background: var(--docs-ink);
+  color: #f3f5fa;
 }
 
 .docs-example figcaption {
@@ -135,50 +178,106 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
-  min-height: 2.65rem;
-  padding: 0.35rem 0.9rem;
-  border-bottom: 1px solid #425679;
-  font-size: 0.88rem;
+  gap: 0.35rem 0.75rem;
+  min-height: 2.8rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 0.55rem 0.55rem 0 0;
+  border-bottom: 1px solid #33415a;
+  background: #1a2539;
+  font-size: 0.89rem;
   font-weight: 650;
 }
 
-.docs-example pre { padding: 0.85rem 0.9rem; color: inherit; }
+.docs-example figcaption > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.docs-example pre {
+  padding: 0.9rem 0.95rem;
+  border-radius: 0 0 0.55rem 0.55rem;
+  color: inherit;
+  font-size: 0.93rem;
+  line-height: 1.7;
+  scrollbar-color: #65718b #172136;
+}
+
 .docs-example pre code { overflow-wrap: normal; }
-.docs-example :focus-visible { outline-color: #92b5ff; outline-offset: 1px; }
-.docs-copy {
-  padding: 0.22rem 0.5rem;
-  border: 1px solid #7c92b4;
-  border-radius: 0.32rem;
+.docs-example :is(pre, button):focus-visible { outline: 2px solid #aeb8ff; outline-offset: -2px; }
+
+button.docs-copy {
+  min-height: 2rem;
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #677794;
+  border-radius: 0.35rem;
   background: transparent;
   color: inherit;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
-.docs-copy:hover { background: #294574; }
-.docs-copy[aria-live] { border: 0; }
-.docs-mobile-toc { display: none; }
-.docs-main details { padding: 0.65rem 0.85rem; border: 1px solid var(--line); border-radius: 0.48rem; }
-.docs-main summary { cursor: pointer; font-weight: 650; color: var(--navy); }
+
+button.docs-copy:hover { background: #354564; }
+.docs-copy[aria-live] { color: #a4e3d9; font-size: 0.8rem; }
+
+.docs-main details {
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 0.55rem;
+  background: var(--docs-tint);
+}
+
+.docs-main summary { cursor: pointer; font-weight: 650; color: var(--docs-ink); }
+.docs-main summary::marker { color: var(--docs-accent); }
 
 @media (max-width: 48rem) {
+  .docs-page {
+    --docs-header-height: 3.75rem;
+    --docs-anchor-offset: calc(var(--docs-header-height) + 4rem);
+    --docs-gutter: 1.5rem;
+  }
+
+  .docs-page .page-width { width: calc(100% - var(--docs-gutter) - var(--docs-gutter)); }
   .docs-layout { display: block; }
-  .docs-masthead { position: sticky; top: 0; z-index: 2; }
-  .docs-mobile-toc { display: inline; }
-  .docs-main :where(section, h3), .docs-toc h2 { scroll-margin-top: 5rem; }
+  .docs-masthead .public-header { flex-wrap: nowrap; }
   .docs-toc {
-    position: static;
+    z-index: 4;
     max-height: none;
-    padding: 1.1rem 0;
+    overflow: visible;
+    margin-inline: calc(0px - var(--docs-gutter));
+    padding: 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    background: var(--paper);
   }
-  .docs-toc ul { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); }
+
+  .docs-toc h2 {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .docs-toc ul {
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    gap: 0.28rem;
+    overflow-x: auto;
+    padding: 0.38rem var(--docs-gutter);
+    scrollbar-width: thin;
+    scrollbar-color: #adb6cb var(--paper);
+  }
+
+  .docs-toc a { padding-inline: 0.6rem; border: 0; background: var(--docs-tint); }
 }
 
 @media (max-width: 34rem) {
-  .docs-page .page-width { width: calc(100% - 1.75rem); }
-  .docs-masthead .public-nav a:first-child { display: none; }
-  .docs-main > section { margin-top: 1.75rem; padding-top: 1.15rem; }
+  .docs-page { --docs-gutter: 0.875rem; }
+  .docs-masthead .public-nav a:not(.button) { display: none; }
+  .docs-main > header h1 span { display: block; }
+  .docs-main > section { margin-top: 1.8rem; padding-top: 1.2rem; }
   .docs-table table { min-width: min(25rem, 100%); font-size: 0.88rem; }
   .docs-table table:has(th:nth-child(4)) { min-width: 33rem; }
   .docs-table :where(th, td) { padding-inline: 0.62rem; }

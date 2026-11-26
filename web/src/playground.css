@@ -4,6 +4,7 @@
   align-items: center;
   gap: 0.75rem 1rem;
   padding: 1rem 1.2rem;
+  background: linear-gradient(110deg, var(--tint), var(--paper) 60%);
 }
 
 .playground-key h2 {
@@ -82,7 +83,7 @@
   width: 100%;
   min-height: 2.75rem;
   padding: 0.45rem 0.65rem;
-  border: 1px solid #aebed4;
+  border: 1px solid #b7c2da;
   border-radius: 0.46rem;
   background: var(--paper);
   color: var(--text);
@@ -90,6 +91,8 @@
 }
 
 .playground-field textarea {
+  min-height: 8rem;
+  background: #f9fafe;
   resize: vertical;
 }
 
@@ -186,6 +189,9 @@
   gap: 0.65rem;
   min-height: 8.5rem;
   padding: 0.8rem;
+  background-image: linear-gradient(90deg, transparent calc(100% - 1px), #27324e 0),
+    linear-gradient(transparent calc(100% - 1px), #27324e 0);
+  background-size: 33.333% 100%, 100% 33.333%;
   text-align: center;
   font-size: 0.9rem;
 }
@@ -196,9 +202,10 @@
   aspect-ratio: 1;
   place-items: center;
   padding-left: 0.1rem;
-  border: 1px solid #7c94bc;
-  border-radius: 100%;
-  color: #b4c8e9;
+  border: 1px solid #6474a5;
+  border-radius: 0.8rem;
+  background: #222e51;
+  color: #cbd4ff;
   font-size: 1.3rem;
   line-height: 1;
 }
@@ -246,4 +253,8 @@
   .playground-layout > .panel + .panel {
     margin-top: 0;
   }
+}
+
+@media (max-width: 32rem) {
+  .playground-submit .button { width: 100%; }
 }

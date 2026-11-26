@@ -11,7 +11,13 @@ function AuthFrame({ children }) {
         <Wordmark />
         <a href="/docs/">开发者文档</a>
       </header>
-      <main className="auth-main">{children}</main>
+      <main className="auth-main">
+        <figure className="auth-artwork">
+          <img src="/seedance-tram.webp" alt="暮色中的海滨街道，一辆电车驶向远处" width="1279" height="720" />
+          <figcaption>Seedance 文生视频提示词示意</figcaption>
+        </figure>
+        <div className="auth-content">{children}</div>
+      </main>
     </div>
   );
 }
@@ -44,7 +50,7 @@ function AuthForm({ onAuthenticated, notice }) {
       <section className="auth-card" aria-labelledby="auth-title">
         <h1 id="auth-title">{registering ? '创建客户账号' : '登录客户工作台'}</h1>
         <p>
-          {registering ? '创建账号后管理自己的 API Key 和项目用量。' : '管理 Seedance API 接入和项目用量。'}
+          {registering ? '创建账号后可管理 API Key 和项目用量。' : '使用账号邮箱登录，进入你的 Seedance 项目。'}
         </p>
         {notice && (
           <p className="notice" role="status">
@@ -75,7 +81,7 @@ function AuthForm({ onAuthenticated, notice }) {
             </p>
           )}
           <button className="button primary" disabled={busy}>
-            {busy ? '正在提交…' : registering ? '创建账号' : '登录'}
+            {busy ? (registering ? '正在创建…' : '正在登录…') : registering ? '创建账号' : '登录'}
           </button>
         </form>
         <a className="auth-switch" href={registering ? '/console/' : '/console/?mode=register'}>

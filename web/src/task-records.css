@@ -32,7 +32,7 @@
 .task-record-filters select {
   min-height: 2.75rem;
   padding: 0.45rem 0.55rem;
-  border: 1px solid #aebed4;
+  border: 1px solid #b7c2da;
   border-radius: 0.46rem;
   background: var(--paper);
   color: var(--text);
@@ -52,6 +52,8 @@
 .task-record-table {
   border-radius: 0;
 }
+
+.task-record-table tbody tr:hover { background: #f9fafe; }
 
 .task-record-table th,
 .task-record-table td {
@@ -133,7 +135,7 @@
 }
 
 .task-result-dialog::backdrop {
-  background: #10254a88;
+  background: #10172688;
 }
 
 .task-result-header {
