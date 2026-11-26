@@ -12,11 +12,16 @@ function AuthFrame({ children }) {
         <a href="/docs/">开发者文档</a>
       </header>
       <main className="auth-main">
-        <figure className="auth-artwork">
-          <img src="/seedance-tram.webp" alt="暮色中的海滨街道，一辆电车驶向远处" width="1279" height="720" />
-          <figcaption>Seedance 文生视频提示词示意</figcaption>
-        </figure>
-        <div className="auth-content">{children}</div>
+        {children}
+        <aside className="auth-access" aria-labelledby="auth-access-title">
+          <h2 id="auth-access-title">接入 Seedance API</h2>
+          <p>登录后，在自己的项目里创建 API Key、测试视频生成和查看用量。</p>
+          <div className="auth-endpoint">
+            <span>模型发现</span>
+            <code><span>GET</span> /v1/models</code>
+          </div>
+          <a href="/docs/#quickstart">查看接入说明 <span aria-hidden="true">↗</span></a>
+        </aside>
       </main>
     </div>
   );
@@ -50,7 +55,7 @@ function AuthForm({ onAuthenticated, notice }) {
       <section className="auth-card" aria-labelledby="auth-title">
         <h1 id="auth-title">{registering ? '创建客户账号' : '登录客户工作台'}</h1>
         <p>
-          {registering ? '创建账号后可管理 API Key 和项目用量。' : '使用账号邮箱登录，进入你的 Seedance 项目。'}
+          {registering ? '使用邮箱创建账号后，即可访问客户工作台。' : '使用你的项目账号继续。'}
         </p>
         {notice && (
           <p className="notice" role="status">
@@ -142,11 +147,7 @@ function App() {
   }
   if (session === undefined)
     return (
-      <AuthFrame>
-        <p className="startup-message" role="status">
-          正在验证会话…
-        </p>
-      </AuthFrame>
+      <AuthFrame><p className="auth-card auth-loading" role="status">正在验证会话…</p></AuthFrame>
     );
   if (!session) return <AuthForm onAuthenticated={onAuthenticated} notice={notice} />;
   return <Workspace key={session.customer.id} session={session} onSessionEnded={onSessionEnded} />;

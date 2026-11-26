@@ -5,13 +5,24 @@ import { TaskRecords } from './task-records.jsx';
 import { formatDate, formatNumber, Status } from './workbench-format.jsx';
 import { Wordmark } from './wordmark.jsx';
 
-const sections = [
-  { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
-  { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
-  { id: 'playground', label: '视频体验', mark: '▷', description: '运行一次 Seedance 生成并查看当前结果。' },
-  { id: 'tasks', label: '任务记录', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的生成记录。' },
-  { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和任务用量。' },
+const navigation = [
+  {
+    label: '使用',
+    items: [
+      { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
+      { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
+      { id: 'playground', label: '视频体验', mark: '▷', description: '运行一次 Seedance 生成并查看当前结果。' },
+    ],
+  },
+  {
+    label: '记录',
+    items: [
+      { id: 'tasks', label: '任务记录', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的生成记录。' },
+      { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和任务用量。' },
+    ],
+  },
 ];
+const sections = navigation.flatMap(({ items }) => items);
 
 function formatBillingAmount(billing) {
   if (billing?.amount != null) return billing.amount;
@@ -93,48 +104,55 @@ function UsageSummary({ summary }) {
   );
 }
 
-function Overview({ customer, usage, month }) {
+function Overview({ customer, usage, keys, month }) {
+  const activeKeys = keys.data?.keys.filter((key) => key.status === 'active').length;
   return (
     <>
-      <section className="workspace-banner" aria-labelledby="overview-heading">
-        <div>
-          <h2 id="overview-heading">Seedance 视频生成</h2>
-          <p>直接体验视频生成，或使用项目 API Key 接入你的应用。</p>
-        </div>
-        <div className="workspace-banner-actions">
-          <a className="button light" href="#playground">进入视频体验</a>
-          <a className="button secondary" href="#api">查看 API 接入</a>
-        </div>
-      </section>
-      <section className="panel" aria-labelledby="month-heading">
+      <section className="panel overview-usage" aria-labelledby="month-heading">
         <div className="panel-head">
           <div>
             <h2 id="month-heading">本月用量</h2>
-            <p>{month} · 中国标准时间</p>
+            <p><time dateTime={month}>{month}</time>（北京时间）</p>
           </div>
           <a href="#billing">查看用量明细</a>
         </div>
         <LoadState state={usage}>{({ summary }) => <UsageSummary summary={summary} />}</LoadState>
       </section>
-      <section className="panel" aria-labelledby="scope-heading">
-        <div className="panel-head">
-          <div>
-            <h2 id="scope-heading">账号与项目</h2>
+      <div className="overview-layout">
+        <section className="panel" aria-labelledby="overview-heading">
+          <div className="panel-head">
+            <div>
+              <h2 id="overview-heading">开始接入 Seedance</h2>
+              <p>从创建密钥到查询第一个视频任务。</p>
+            </div>
           </div>
-        </div>
-        <dl className="project-details">
-          <div>
-            <dt>账号</dt>
-            <dd>{customer.email}</dd>
+          <ol className="onboarding-steps" role="list">
+            <li>
+              <div><h3>创建项目 API Key</h3><p>为服务创建独立密钥，保存到服务端环境。</p></div>
+              <a className="button primary" href="#api">管理密钥</a>
+            </li>
+            <li>
+              <div><h3>提交生成任务</h3><p>选择 Seedance 模型，输入提示词并生成视频。</p></div>
+              <a className="button secondary" href="#playground">进入视频体验</a>
+            </li>
+            <li>
+              <div><h3>查询生成结果</h3><p>查看任务状态、失败原因和输出 Token。</p></div>
+              <a className="button secondary" href="#tasks">查看任务</a>
+            </li>
+          </ol>
+        </section>
+        <section className="panel project-panel" aria-labelledby="scope-heading">
+          <div className="panel-head">
+            <h2 id="scope-heading">项目详情</h2>
           </div>
-          <div>
-            <dt>项目 ID</dt>
-            <dd>
-              <code>{customer.projectId}</code>
-            </dd>
-          </div>
-        </dl>
-      </section>
+          <dl className="project-details">
+            <div><dt>账号</dt><dd>{customer.email}</dd></div>
+            <div><dt>项目 ID</dt><dd><code>{customer.projectId}</code></dd></div>
+            <div><dt>可用密钥</dt><dd>{activeKeys == null ? '—' : formatNumber(activeKeys)}</dd></div>
+            <div><dt>API 基础地址</dt><dd><code>{window.location.origin}</code></dd></div>
+          </dl>
+        </section>
+      </div>
     </>
   );
 }
@@ -256,7 +274,7 @@ function KeyPanel({ state, csrfToken, onExpired }) {
   }
 
   return (
-    <section className="panel" aria-labelledby="keys-heading">
+    <section className="panel key-panel" aria-labelledby="keys-heading">
       <div className="panel-head">
         <div>
           <h2 id="keys-heading">API Key</h2>
@@ -295,7 +313,7 @@ function KeyPanel({ state, csrfToken, onExpired }) {
           keys.length === 0 ? (
             <p className="empty">暂无 API Key。创建一枚 Key 后即可开始接入。</p>
           ) : (
-            <div className="table-scroll" tabIndex={0} role="region" aria-label="API Key 列表">
+            <div className="table-scroll key-table" tabIndex={0} role="region" aria-label="API Key 列表">
               <table>
                 <thead>
                   <tr>
@@ -406,7 +424,7 @@ function SetupGuide() {
       <p className="guide-note">
         用创建响应里的任务 ID 设置 <code>TASK_ID</code>。实际可用模型以模型列表为准。
       </p>
-      <section aria-labelledby="asset-guide-heading">
+      <section className="guide-subsection" aria-labelledby="asset-guide-heading">
         <h3 id="asset-guide-heading">用本地图片作为参考</h3>
         <p className="guide-note">
           用同一枚业务 Key 逐条运行命令。将创建素材组返回的 <code>group.id</code> 设为 <code>GROUP_ID</code>，
@@ -669,16 +687,30 @@ export function Workspace({ session, onSessionEnded }) {
       >
         跳到正文
       </a>
+      <header className="workspace-header">
+        <div className="workspace-brand">
+          <Wordmark />
+          <span className="workspace-context">客户工作台</span>
+        </div>
+        <div className="account-menu">
+          <span title={session.customer.email}>{session.customer.email}</span>
+          <button className="button secondary" onClick={logout} disabled={loggingOut}>
+            {loggingOut ? '正在退出…' : '退出登录'}
+          </button>
+        </div>
+      </header>
       <aside className="workspace-sidebar">
-        <Wordmark />
         <nav aria-label="客户工作台">
-          {sections.map((item) => (
-            <a key={item.id} href={`#${item.id}`} aria-current={section.id === item.id ? 'page' : undefined}>
-              <span className="nav-mark" aria-hidden="true">
-                {item.mark}
-              </span>
-              {item.label}
-            </a>
+          {navigation.map(({ label, items }) => (
+            <div key={label} className="workspace-nav-group">
+              <p>{label}</p>
+              {items.map((item) => (
+                <a key={item.id} href={`#${item.id}`} aria-current={section.id === item.id ? 'page' : undefined}>
+                  <span className="nav-mark" aria-hidden="true">{item.mark}</span>
+                  {item.label}
+                </a>
+              ))}
+            </div>
           ))}
           <a className="sidebar-docs" href="/docs/">
             <span className="nav-mark" aria-hidden="true">↗</span>
@@ -686,15 +718,6 @@ export function Workspace({ session, onSessionEnded }) {
           </a>
         </nav>
       </aside>
-      <header className="workspace-header">
-        <span className="workspace-context">客户工作台</span>
-        <div className="account-menu">
-          <span>{session.customer.email}</span>
-          <button className="button secondary" onClick={logout} disabled={loggingOut}>
-            {loggingOut ? '正在退出…' : '退出登录'}
-          </button>
-        </div>
-      </header>
       <main id="workspace-content" className="workspace-main" tabIndex={-1}>
         <div className="page-heading">
           <h1>{section.label}</h1>
@@ -705,7 +728,7 @@ export function Workspace({ session, onSessionEnded }) {
             {error}
           </p>
         )}
-        {section.id === 'overview' && <Overview usage={usage} month={maxMonth} customer={session.customer} />}
+        {section.id === 'overview' && <Overview usage={usage} keys={keys} month={maxMonth} customer={session.customer} />}
         {section.id === 'api' && (
           <>
             <KeyPanel state={keys} csrfToken={session.csrfToken} onExpired={onSessionEnded} />
