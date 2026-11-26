@@ -63,12 +63,12 @@ function AuthForm({ onAuthenticated, notice }) {
               type="password"
               required
               autoComplete={registering ? 'new-password' : 'current-password'}
-              minLength={registering ? 12 : undefined}
+              minLength={registering ? 8 : undefined}
               maxLength={128}
               aria-describedby={registering ? 'password-hint' : undefined}
             />
           </label>
-          {registering && <small id="password-hint">使用至少 12 个字符。</small>}
+          {registering && <small id="password-hint">使用至少 8 个字符。</small>}
           {error && (
             <p className="message error" role="alert">
               {error}

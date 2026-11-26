@@ -59,6 +59,29 @@ def test_registration_creates_one_project_and_stores_only_hashes(tmp_path: Path)
         assert session not in response.text and PASSWORD not in response.text
 
 
+def test_registration_and_login_require_eight_password_characters(tmp_path: Path) -> None:
+    with _client(tmp_path / "password-length.sqlite") as client:
+        email = "alice@example.com"
+        too_short = {"email": email, "password": "测试密码abc"}
+        minimum = {"email": email, "password": "测试密码abcd"}
+
+        rejected_register = client.post(f"{CUSTOMER_PATH}/register", json=too_short)
+        assert rejected_register.status_code == 422
+        assert rejected_register.json()["detail"]["code"] == "invalid_password"
+
+        registration = client.post(f"{CUSTOMER_PATH}/register", json=minimum)
+        assert registration.status_code == 201
+        client.cookies.clear()
+
+        rejected_login = client.post(f"{CUSTOMER_PATH}/login", json=too_short)
+        assert rejected_login.status_code == 422
+        assert rejected_login.json()["detail"]["code"] == "invalid_password"
+
+        login = client.post(f"{CUSTOMER_PATH}/login", json=minimum)
+        assert login.status_code == 200
+        assert login.json()["customer"] == registration.json()["customer"]
+
+
 def test_login_rotates_session_and_logout_requires_csrf(tmp_path: Path) -> None:
     with _client(tmp_path / "session.sqlite") as client:
         registration = _register(client, "alice@example.com")

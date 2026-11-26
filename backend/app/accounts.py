@@ -115,8 +115,8 @@ def _email(raw_email: str) -> str:
 
 def _password_bytes(raw_password: SecretStr) -> bytes:
     password = raw_password.get_secret_value()
-    if not 12 <= len(password) <= 128:
-        raise _error(422, "invalid_password", "密码长度须为 12 至 128 个字符")
+    if not 8 <= len(password) <= 128:
+        raise _error(422, "invalid_password", "密码长度须为 8 至 128 个字符")
     try:
         return password.encode("utf-8")
     except UnicodeError as error:
