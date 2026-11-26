@@ -6,7 +6,7 @@ Richi Proxy 为多个客户项目提供统一的视频生成 API。客户使用�
 
 ## 本地运行
 
-安装 Python 3.11 及以上、Node.js 22.13 及以上和 pnpm。后端从运行进程的环境变量读取配置，默认使用本地 SQLite。配置项见 [示例配置](.env.example)。
+后端需要 Python 3.11 及以上，并要求 Python 的 SQLite 运行库为 3.35.0 及以上。用 `python -c "import sqlite3; print(sqlite3.sqlite_version)"` 检查实际版本。客户工作台需要 Node.js 22.13 及以上和 pnpm。后端从运行进程的环境变量读取配置，默认使用本地 SQLite。 [SQLite RETURNING 支持说明](https://www.sqlite.org/lang_returning.html) · [示例配置](.env.example)
 
 在仓库根目录执行：
 
