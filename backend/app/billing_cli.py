@@ -1,4 +1,4 @@
-"""Manage Richi Proxy billing versions from the server."""
+"""Manage richproxy billing versions from the server."""
 
 import argparse
 from datetime import datetime
@@ -106,7 +106,7 @@ def _provider_command(database: Database, args: argparse.Namespace) -> dict:
 def _run(args: argparse.Namespace) -> dict:
     path = args.database if args.database is not None else Settings().database_path
     if not path.is_file():
-        raise ValueError("SQLite database does not exist. Initialize it with the Richi Proxy server first.")
+        raise ValueError("SQLite database does not exist. Initialize it with the richproxy server first.")
     database = Database(path)
     if args.action in {"import-provider-bill", "provider-cost-report"}:
         return _provider_command(database, args)

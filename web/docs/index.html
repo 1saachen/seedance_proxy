@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Seedance API 开发者文档 | Richi Proxy</title>
-    <meta name="description" content="Richi Proxy Seedance API 接入手册。查看鉴权、模型规格、视频生成、任务管理、素材接口、回调和错误处理。" />
+    <title>Seedance API 开发者文档 | richproxy</title>
+    <meta name="description" content="richproxy Seedance API 接入手册。查看鉴权、模型规格、视频生成、任务管理、素材接口、回调和错误处理。" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="zh_CN" />
-    <meta property="og:site_name" content="Richi Proxy" />
-    <meta property="og:title" content="Seedance API 开发者文档 | Richi Proxy" />
+    <meta property="og:site_name" content="richproxy" />
+    <meta property="og:title" content="Seedance API 开发者文档 | richproxy" />
     <meta property="og:description" content="查看 Seedance 视频生成、任务管理与素材接口的参数和示例。" />
     <meta name="theme-color" content="#f3f5fa" />
     <link rel="stylesheet" href="/src/styles.css" />
@@ -19,8 +19,8 @@
     <a class="skip-link" href="#docs-main">跳到正文</a>
     <div class="docs-masthead">
       <header class="public-header page-width">
-        <a class="wordmark" href="/" aria-label="Richi Proxy 首页">
-          <span class="brand-mark" aria-hidden="true">R</span><span>Richi Proxy</span>
+        <a class="wordmark" href="/" aria-label="richproxy 首页">
+          <span class="brand-mark" aria-hidden="true">R</span><span>richproxy</span>
         </a>
         <nav class="public-nav" aria-label="主导航">
           <a href="/">首页</a>
@@ -62,7 +62,7 @@
           </ol>
           <figure class="docs-example">
             <figcaption>从模型列表到首次提交 · Shell</figcaption>
-            <pre tabindex="0"><code>export BASE_URL='https://relay.example.com' # 换成你的 Richi Proxy 地址
+            <pre tabindex="0"><code>export BASE_URL='https://relay.example.com' # 换成你的 richproxy 地址
 export REQUEST_ID='video-order-001'       # 每次新任务换一个，请求重试沿用原值
 
 curl -fSs "$BASE_URL/v1/models" \
@@ -327,7 +327,7 @@ else:
               </tbody>
             </table>
           </div>
-          <p class="docs-note">生成视频链接由方舟提供，有效期为 24 小时。需要留存视频时请在有效期内下载。任务记录和用量仍可查询，Richi Proxy 不会自动另存生成视频或延长链接。</p>
+          <p class="docs-note">生成视频链接由方舟提供，有效期为 24 小时。需要留存视频时请在有效期内下载。任务记录和用量仍可查询，richproxy 不会自动另存生成视频或延长链接。</p>
 
           <h3 id="list-tasks">查询任务列表</h3>
           <p class="docs-route"><strong>GET</strong><code>/api/v3/contents/generations/tasks</code></p>
@@ -436,12 +436,12 @@ else:
           <h3 id="presets">使用方舟预置素材</h3>
           <p class="docs-route"><strong>GET</strong><code>/api/asset/presets</code></p>
           <p>响应和普通业务请求使用同一 Bearer 鉴权。<code>items</code> 每项包含 <code>id</code>、<code>name</code>、<code>assetType</code>、<code>reference</code>。把返回的 <code>asset://preset_…</code> 填到对应的输入项。列表来自运营配置，尚未配置时返回空数组。 <a href="https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh">方舟 2.5 教程 · 角色参考</a></p>
-          <p>将本账号生成的视频用于二次创作时，可以在有效期内把任务结果的原始 <code>content.video_url</code> 用作 <code>reference_video</code>。方舟根据账号与生成结果核验可用性。Richi Proxy 保留任务 ID 和结果地址，不额外保存视频文件。</p>
+          <p>将本账号生成的视频用于二次创作时，可以在有效期内把任务结果的原始 <code>content.video_url</code> 用作 <code>reference_video</code>。方舟根据账号与生成结果核验可用性。richproxy 保留任务 ID 和结果地址，不额外保存视频文件。</p>
         </section>
 
         <section id="callbacks" aria-labelledby="callbacks-title">
           <h2 id="callbacks-title">接收任务回调</h2>
-          <p>在创建请求中填写可访问的公网 HTTPS 地址（端口 443，最多 2048 个字符），例如 <code>https://example.com/events/video</code>。Richi Proxy 观察到任务状态变化后，向 <code>callback_url</code> 发送 HTTP <code>POST</code>。JSON 正文结构与<a href="#get-task">单任务查询</a>一致，使用本站任务 ID。回调目标须直接响应，不跟随重定向。</p>
+          <p>在创建请求中填写可访问的公网 HTTPS 地址（端口 443，最多 2048 个字符），例如 <code>https://example.com/events/video</code>。richproxy 观察到任务状态变化后，向 <code>callback_url</code> 发送 HTTP <code>POST</code>。JSON 正文结构与<a href="#get-task">单任务查询</a>一致，使用本站任务 ID。回调目标须直接响应，不跟随重定向。</p>
           <p>任务排队、运行、成功、失败、取消和超时均可触发通知，提交失败或状态未知时也会通知。事件在同一任务内按顺序投递。连接失败或未收到 2xx 时，最多重试五次。重试间隔为 5 秒、30 秒、2 分钟、10 分钟和 30 分钟，队列执行可能延后。撤销业务 Key 会停止排队中的投递。也可用轮询补查结果。</p>
           <div class="docs-table" tabindex="0" role="region" aria-label="回调请求头">
             <table>
@@ -522,7 +522,7 @@ def verify_callback(api_key, timestamp, event_id, signature, raw_body):
       </main>
     </div>
     <footer class="public-footer page-width">
-      <span>Richi Proxy</span><a href="/console/">客户工作台</a>
+      <span>richproxy</span><a href="/console/">客户工作台</a>
     </footer>
   </body>
 </html>

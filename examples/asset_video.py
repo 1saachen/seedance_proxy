@@ -143,7 +143,7 @@ def _base_url(value: str) -> httpx.URL:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", required=True, type=_base_url, help="Richi Proxy API base URL")
+    parser.add_argument("--base-url", required=True, type=_base_url, help="richproxy API base URL")
     parser.add_argument("--image", required=True, type=Path, help="local reference image")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Seedance model alias (default {DEFAULT_MODEL})")
     parser.add_argument("--poll-interval", type=_positive_seconds, default=2, help="seconds between status checks (default 2)")
@@ -151,7 +151,7 @@ def main() -> int:
     args = parser.parse_args()
     api_key = os.environ.get("API_KEY", "").strip()
     if not re.fullmatch(r"[\x21-\x7e]+", api_key):
-        parser.error("set API_KEY to your Richi Proxy business Key")
+        parser.error("set API_KEY to your richproxy business Key")
     try:
         with args.image.open("rb") as image, httpx.Client(
             base_url=args.base_url, headers={"Authorization": f"Bearer {api_key}"},

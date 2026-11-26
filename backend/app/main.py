@@ -98,7 +98,7 @@ def create_app(
                     with suppress(asyncio.CancelledError):
                         await task
 
-    app = FastAPI(title="Richi Proxy", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="richproxy", version="0.1.0", lifespan=lifespan)
     upload_registration.redact_source_access_log()
     app.state.settings = settings
     app.state.db = database
