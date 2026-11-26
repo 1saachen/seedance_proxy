@@ -69,7 +69,7 @@ def _relay_rows(connection: sqlite3.Connection, month: str) -> list[sqlite3.Row]
 
 
 def _model_mapping(connection: sqlite3.Connection, model_map: dict[str, str] | None) -> dict[str, str]:
-    known = {model for model, _ in SEEDANCE_MODELS.values()}
+    known = {model.upstream_id for model in SEEDANCE_MODELS.values()}
     known.update(row[0] for row in connection.execute("SELECT DISTINCT upstream_model FROM video_tasks WHERE upstream_model IS NOT NULL"))
     mapping = {model: model for model in known}
     if model_map is None:

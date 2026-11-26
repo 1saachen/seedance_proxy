@@ -3,11 +3,13 @@ const taskIdPattern = /^vid_[A-Za-z0-9_-]{1,128}$/;
 const groupIdPattern = /^grp_[0-9a-f]{32}$/;
 const uploadIdPattern = /^upl_[0-9a-f]{32}$/;
 const assetIdPattern = /^ast_[0-9a-f]{32}$/;
+const modelIdPattern = /^doubao-seedance-[A-Za-z0-9.-]{1,62}$/;
+const legacyDurations = { 'doubao-seedance-2.5': 30, 'doubao-seedance-2.0': 15 };
 
 export const mediaKinds = {
-  Image: { label: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], limit: 9, mib: 30 },
-  Video: { label: '视频', extensions: ['mp4', 'mov'], limit: 3, mib: 200 },
-  Audio: { label: '音频', extensions: ['wav', 'mp3'], limit: 3, mib: 15 },
+  Image: { label: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff'], mib: 30 },
+  Video: { label: '视频', extensions: ['mp4', 'mov'], mib: 200 },
+  Audio: { label: '音频', extensions: ['wav', 'mp3'], mib: 15 },
 };
 
 export function httpsVideoUrl(value) {
@@ -73,12 +75,38 @@ function readId(value, pattern) {
   return value;
 }
 
+function readVideoModel(id, video) {
+  if (video === undefined) {
+    // Older servers only advertise the two standard models and omit capabilities.
+    if (!Object.hasOwn(legacyDurations, id)) return null;
+    return {
+      id, maxDuration: legacyDurations[id], resolutions: ['480p', '720p', '1080p'],
+      audioOnly: id === 'doubao-seedance-2.5', referenceLimits: { Image: 9, Video: 3, Audio: 3 },
+    };
+  }
+  const { max_duration: maxDuration, resolutions, audio_only: audioOnly } = video ?? {};
+  const referenceLimits = {
+    Image: video?.max_reference_images, Video: video?.max_reference_videos, Audio: video?.max_reference_audios,
+  };
+  if (!Number.isSafeInteger(maxDuration) || maxDuration < 4 || typeof audioOnly !== 'boolean' ||
+    !Array.isArray(resolutions) || !resolutions.length ||
+    !resolutions.every((resolution) => typeof resolution === 'string' && /^(?:[1-9]\d{2,3}p|4k)$/.test(resolution)) ||
+    !Object.values(referenceLimits).every((limit) => Number.isSafeInteger(limit) && limit >= 0)) {
+    throw new VideoApiError('invalid_response');
+  }
+  return { id, maxDuration, resolutions: [...new Set(resolutions)], audioOnly, referenceLimits };
+}
+
 export async function listVideoModels(key, signal) {
   const result = await request(key, '/v1/models', { signal });
   if (!Array.isArray(result.data)) throw new VideoApiError('invalid_response');
-  return Array.from(new Set(result.data.map((item) => item?.id).filter(
-    (id) => typeof id === 'string' && /^doubao-seedance-[A-Za-z0-9.-]{1,62}$/.test(id),
-  )));
+  const models = new Map();
+  for (const item of result.data) {
+    if (!matchesId(item?.id, modelIdPattern) || models.has(item.id)) continue;
+    const model = readVideoModel(item.id, item.video);
+    if (model) models.set(item.id, model);
+  }
+  return [...models.values()];
 }
 
 export async function getVideoTask(key, id, signal) {

@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import sqlite3
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from uuid import uuid4
@@ -22,10 +23,53 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 TASKS_PATH = "/api/v3/contents/generations/tasks"
+VARIANT_RESOLUTIONS = ("480p", "720p")
+STANDARD_RESOLUTIONS = (*VARIANT_RESOLUTIONS, "1080p")
+
+
+@dataclass(frozen=True)
+class VideoCapabilities:
+    max_duration: int
+    resolutions: tuple[str, ...]
+    audio_only: bool
+    frame_ratio_adaptive: bool
+    max_reference_images: int = 9
+    max_reference_videos: int = 3
+    max_reference_audios: int = 3
+
+
+@dataclass(frozen=True)
+class SeedanceModel:
+    upstream_id: str
+    video: VideoCapabilities
+
+
+SEEDANCE_20_VARIANT = VideoCapabilities(
+    max_duration=15, resolutions=VARIANT_RESOLUTIONS, audio_only=False, frame_ratio_adaptive=False,
+)
 SEEDANCE_MODELS = {
-    "doubao-seedance-2.5": ("doubao-seedance-2-5-260628", 30),
-    "doubao-seedance-2.0": ("doubao-seedance-2-0-260128", 15),
+    "doubao-seedance-2.5": SeedanceModel(
+        "doubao-seedance-2-5-260628",
+        VideoCapabilities(max_duration=30, resolutions=STANDARD_RESOLUTIONS, audio_only=True, frame_ratio_adaptive=True),
+    ),
+    "doubao-seedance-2.5-flash": SeedanceModel(
+        "doubao-seedance-2-5-flash-261115",
+        VideoCapabilities(
+            max_duration=30, resolutions=VARIANT_RESOLUTIONS, audio_only=True, frame_ratio_adaptive=True,
+            max_reference_images=10, max_reference_videos=5, max_reference_audios=5,
+        ),
+    ),
+    "doubao-seedance-2.0": SeedanceModel(
+        "doubao-seedance-2-0-260128",
+        VideoCapabilities(max_duration=15, resolutions=STANDARD_RESOLUTIONS, audio_only=False, frame_ratio_adaptive=False),
+    ),
+    "doubao-seedance-2.0-fast": SeedanceModel("doubao-seedance-2-0-fast-260128", SEEDANCE_20_VARIANT),
+    "doubao-seedance-2.0-mini": SeedanceModel("doubao-seedance-2-0-mini-260615", SEEDANCE_20_VARIANT),
 }
+MAX_CONTENT_ITEMS = 1 + max(
+    model.video.max_reference_images + model.video.max_reference_videos + model.video.max_reference_audios
+    for model in SEEDANCE_MODELS.values()
+)
 UPSTREAM_STATES = {
     "queued": "queued",
     "running": "running",
@@ -37,7 +81,7 @@ UPSTREAM_STATES = {
 }
 ACTIVE_STATES = {"queued", "running"}
 TERMINAL_STATES = {"succeeded", "failed", "canceled", "expired"}
-RESOLUTIONS = {"480p", "720p", "1080p"}
+RESOLUTIONS = set(STANDARD_RESOLUTIONS)
 RATIOS = {"16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"}
 UPSTREAM_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
 ASSET_MEDIA_TYPES = {"image_url": "Image", "video_url": "Video", "audio_url": "Audio"}
@@ -125,7 +169,7 @@ Content = Annotated[TextContent | ImageContent | VideoContent | AudioContent, Fi
 
 class VideoRequest(ModelInput):
     model: str = Field(min_length=1, max_length=80)
-    content: list[Content] = Field(min_length=1, max_length=16)
+    content: list[Content] = Field(min_length=1, max_length=MAX_CONTENT_ITEMS)
     duration: int | None = None
     resolution: Literal["480p", "720p", "1080p"] | None = None
     ratio: Literal["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"] | None = None
@@ -136,24 +180,31 @@ class VideoRequest(ModelInput):
 
     @model_validator(mode="after")
     def validate_request(self):
-        if self.model not in SEEDANCE_MODELS:
+        model = SEEDANCE_MODELS.get(self.model)
+        if model is None:
             raise ValueError("unknown model alias")
-        maximum = SEEDANCE_MODELS[self.model][1]
-        if self.duration is not None and self.duration != -1 and not 4 <= self.duration <= maximum:
-            raise ValueError(f"duration must be -1 or from 4 to {maximum} seconds")
+        limits = model.video
+        if self.duration is not None and self.duration != -1 and not 4 <= self.duration <= limits.max_duration:
+            raise ValueError(f"duration must be -1 or from 4 to {limits.max_duration} seconds")
+        if self.resolution is not None and self.resolution not in limits.resolutions:
+            raise ValueError(f"resolution must be one of {', '.join(limits.resolutions)} for {self.model}")
         kinds = [item.type for item in self.content]
-        for kind, count in (("text", 1), ("image_url", 9), ("video_url", 3), ("audio_url", 3)):
+        for kind, count in (
+            ("text", 1),
+            ("image_url", limits.max_reference_images),
+            ("video_url", limits.max_reference_videos),
+            ("audio_url", limits.max_reference_audios),
+        ):
             if kinds.count(kind) > count:
                 raise ValueError(f"too many {kind} content items")
         frames = [item.role for item in self.content if isinstance(item, ImageContent)]
         if {"first_frame", "last_frame"} & set(frames):
             if frames not in (["first_frame"], ["first_frame", "last_frame"], ["last_frame", "first_frame"]) or {"video_url", "audio_url"} & set(kinds):
                 raise ValueError("frame generation needs one first frame and may include one last frame")
-            if self.model == "doubao-seedance-2.5" and self.ratio not in (None, "adaptive"):
-                raise ValueError("Seedance 2.5 frame generation uses the adaptive ratio")
-        if (self.model == "doubao-seedance-2.0" and "audio_url" in kinds
-                and not {"image_url", "video_url"} & set(kinds)):
-            raise ValueError("Seedance 2.0 requires a reference image or video with reference audio")
+            if limits.frame_ratio_adaptive and self.ratio not in (None, "adaptive"):
+                raise ValueError(f"{self.model} frame generation uses the adaptive ratio")
+        if not limits.audio_only and "audio_url" in kinds and not {"image_url", "video_url"} & set(kinds):
+            raise ValueError(f"{self.model} requires a reference image or video with reference audio")
         return self
 
 
@@ -211,7 +262,13 @@ def _submission_error(status: str, task_id: str) -> HTTPException:
 @router.get("/v1/models")
 def list_models(request: Request, principal: Principal):
     models = SEEDANCE_MODELS if _ark_key(request.app) else {}
-    return {"object": "list", "data": [{"id": alias, "object": "model", "owned_by": "volcengine"} for alias in models]}
+    return {
+        "object": "list",
+        "data": [
+            {"id": alias, "object": "model", "owned_by": "volcengine", "video": asdict(model.video)}
+            for alias, model in models.items()
+        ],
+    }
 
 
 @router.post(TASKS_PATH)
@@ -236,7 +293,7 @@ async def create_task(
         if existing is not None:
             return _replay(existing, fingerprint)
     headers = _ark_headers(request.app)
-    upstream_model = SEEDANCE_MODELS[payload.model][0]
+    upstream_model = SEEDANCE_MODELS[payload.model].upstream_id
     with request.app.state.db.connect() as connection:
         result = connection.execute(
             """INSERT INTO video_tasks

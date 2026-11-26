@@ -8,6 +8,13 @@ import './playground.css';
 
 const keyPattern = /^vap_live_[A-Za-z0-9_-]{43}$/;
 const selectableFiles = Object.values(mediaKinds).flatMap(({ extensions }) => extensions.map((ext) => `.${ext}`)).join(',');
+const modelLabels = {
+  'doubao-seedance-2.5': 'Seedance 2.5',
+  'doubao-seedance-2.5-flash': 'Seedance 2.5 Flash',
+  'doubao-seedance-2.0': 'Seedance 2.0',
+  'doubao-seedance-2.0-fast': 'Seedance 2.0 Fast',
+  'doubao-seedance-2.0-mini': 'Seedance 2.0 Mini',
+};
 const stepNames = {
   group: '正在创建素材组', upload: '正在上传参考素材', register: '正在登记参考素材',
   asset: '正在等待参考素材可用', submit: '正在提交视频任务',
@@ -201,7 +208,24 @@ function VideoKey({ active, csrfToken, onExpired, videoKey, setVideoKey, onKeysC
   );
 }
 
-function ReferenceFiles({ selected, setSelected }) {
+function getMediaProblem(model, media) {
+  if (!model || !media.length) return '';
+  for (const [kind, limit] of Object.entries(model.referenceLimits)) {
+    if (media.filter((item) => item.kind === kind).length > limit) {
+      return `当前模型最多支持 ${limit} 个参考${mediaKinds[kind].label}，请移除多余的文件。`;
+    }
+  }
+  if (!model.audioOnly && media.every(({ kind }) => kind === 'Audio')) {
+    return '当前模型使用参考音频时，还需要添加参考图片或视频。';
+  }
+  return '';
+}
+
+function chooseResolution(resolutions, preferred) {
+  return [preferred, '720p'].find((item) => resolutions.includes(item)) ?? resolutions[0] ?? '';
+}
+
+function ReferenceFiles({ selected, setSelected, referenceLimits, mediaProblem }) {
   const [error, setError] = useState('');
 
   function addFiles(event) {
@@ -215,8 +239,9 @@ function ReferenceFiles({ selected, setSelected }) {
         continue;
       }
       const [kind, format] = match;
-      if (next.filter((item) => item.kind === kind).length >= format.limit) {
-        problem ||= `${format.label}最多可添加 ${format.limit} 个。`;
+      const limit = referenceLimits[kind];
+      if (next.filter((item) => item.kind === kind).length >= limit) {
+        problem ||= `${format.label}最多可添加 ${limit} 个。`;
         continue;
       }
       if (!file.size || file.size > format.mib * 1024 * 1024) {
@@ -233,9 +258,16 @@ function ReferenceFiles({ selected, setSelected }) {
   return (
     <div className="playground-field">
       <label htmlFor="playground-media">参考素材 <small>可选</small></label>
-      <input id="playground-media" type="file" accept={selectableFiles} multiple aria-describedby="playground-media-note" onChange={addFiles} />
-      <p className="playground-hint" id="playground-media-note">图片 9 张，每张最多 30 MiB。视频 3 个，每个最多 200 MiB。音频 3 个，每个最多 15 MiB。</p>
+      <input id="playground-media" type="file" accept={selectableFiles} multiple disabled={!referenceLimits}
+        aria-describedby={referenceLimits ? 'playground-media-note' : undefined} onChange={addFiles} />
+      {referenceLimits && (
+        <p className="playground-hint" id="playground-media-note">
+          {Object.entries(mediaKinds).map(([kind, { label, mib }]) =>
+            `${label}最多 ${referenceLimits[kind]} 个，每个不超过 ${mib} MiB。`).join(' ')}
+        </p>
+      )}
       {error && <p className="message error" role="alert">{error}</p>}
+      {mediaProblem && <p className="message error" role="alert">{mediaProblem}</p>}
       {selected.length > 0 && (
         <ul className="playground-files">
           {selected.map(({ id, file, kind }) => (
@@ -344,17 +376,20 @@ export function Playground({ active = true, csrfToken, onExpired, videoKey, setV
   const [prompt, setPrompt] = useState('');
   const [media, setMedia] = useState([]);
   const [duration, setDuration] = useState('4');
-  const [resolution, setResolution] = useState('480p');
+  const [chosenResolution, setChosenResolution] = useState('480p');
   const [job, setJob] = useState(null);
   const [busy, setBusy] = useState(false);
   const operation = useRef(null);
   const current = useRef(null);
   const catalog = useVideoModels(active, videoKey);
   const models = catalog.models ?? [];
-  const model = models.includes(chosenModel) ? chosenModel : models[0] ?? '';
-  const maximum = model === 'doubao-seedance-2.0' ? 15 : 30;
-  const audioOnly = media.length > 0 && media.every(({ kind }) => kind === 'Audio');
-  const mediaProblem = model === 'doubao-seedance-2.0' && audioOnly;
+  const model = models.find(({ id }) => id === chosenModel) ?? models[0];
+  const resolutions = model?.resolutions ?? [];
+  const resolution = chooseResolution(resolutions, chosenResolution);
+  const seconds = Number(duration);
+  const mediaProblem = getMediaProblem(model, media);
+  const ready = Boolean(videoKey && model && prompt.trim() && !mediaProblem &&
+    Number.isInteger(seconds) && seconds >= 4 && seconds <= model.maxDuration);
   const locked = busy || Boolean(job?.continuable);
 
   useEffect(() => () => operation.current?.abort(), [active]);
@@ -422,10 +457,8 @@ export function Playground({ active = true, csrfToken, onExpired, videoKey, setV
 
   function startVideo(event) {
     event.preventDefault();
-    const seconds = Number(duration);
-    if (!videoKey || !model || !prompt.trim() || locked || operation.current || mediaProblem ||
-      !Number.isInteger(seconds) || seconds < 4 || seconds > maximum) return;
-    const run = createVideoRun({ model, prompt: prompt.trim(), duration: seconds, resolution, media });
+    if (!ready || locked || operation.current) return;
+    const run = createVideoRun({ model: model.id, prompt: prompt.trim(), duration: seconds, resolution, media });
     current.current = run;
     setJob(null);
     void runVideo(run);
@@ -447,12 +480,15 @@ export function Playground({ active = true, csrfToken, onExpired, videoKey, setV
             <fieldset disabled={locked}>
               <div className="playground-field">
                 <label htmlFor="playground-model">模型</label>
-                <select id="playground-model" value={model} disabled={!models.length} onChange={(event) => {
-                  setChosenModel(event.target.value);
-                  if (event.target.value === 'doubao-seedance-2.0' && Number(duration) > 15) setDuration('15');
+                <select id="playground-model" value={model?.id ?? ''} disabled={!models.length} onChange={(event) => {
+                  const next = models.find(({ id }) => id === event.target.value);
+                  if (!next) return;
+                  setChosenModel(next.id);
+                  if (seconds > next.maxDuration) setDuration(String(next.maxDuration));
+                  setChosenResolution(chooseResolution(next.resolutions, resolution));
                 }}>
                   {!models.length && <option value="">{!videoKey ? '请先验证业务 Key' : '选择模型'}</option>}
-                  {models.map((item) => <option value={item} key={item}>{item}</option>)}
+                  {models.map(({ id }) => <option value={id} key={id}>{modelLabels[id] ?? id}</option>)}
                 </select>
                 {videoKey && !catalog.error && !models.length && (
                   <p className="playground-hint" role="status">{catalog.models ? '当前没有可用的 Seedance 模型。' : '正在加载模型…'}</p>
@@ -469,23 +505,23 @@ export function Playground({ active = true, csrfToken, onExpired, videoKey, setV
                 <textarea id="playground-prompt" required rows={5} maxLength={4000} value={prompt}
                   placeholder="描述画面、主体动作和镜头变化" onChange={(event) => setPrompt(event.target.value)} />
               </div>
-              <ReferenceFiles selected={media} setSelected={setMedia} />
-              {mediaProblem && <p className="message error" role="alert">Seedance 2.0 使用参考音频时，还需要添加参考图片或视频。</p>}
+              <ReferenceFiles key={model?.id} selected={media} setSelected={setMedia}
+                referenceLimits={model?.referenceLimits} mediaProblem={mediaProblem} />
               <div className="playground-field-pair">
                 <div className="playground-field">
                   <label htmlFor="playground-duration">时长（秒）</label>
-                  <input id="playground-duration" type="number" required min={4} max={maximum} value={duration}
+                  <input id="playground-duration" type="number" required min={4} max={model?.maxDuration} value={duration} disabled={!model}
                     onChange={(event) => setDuration(event.target.value)} />
                 </div>
                 <div className="playground-field">
                   <label htmlFor="playground-resolution">分辨率</label>
-                  <select id="playground-resolution" value={resolution} onChange={(event) => setResolution(event.target.value)}>
-                    <option>480p</option><option>720p</option><option>1080p</option>
+                  <select id="playground-resolution" value={resolution} disabled={!model} onChange={(event) => setChosenResolution(event.target.value)}>
+                    {resolutions.map((item) => <option key={item}>{item}</option>)}
                   </select>
                 </div>
               </div>
               <div className="playground-submit">
-                <button className="button primary" disabled={!videoKey || !model || !prompt.trim() || mediaProblem} type="submit">生成视频</button>
+                <button className="button primary" disabled={!ready} type="submit">生成视频</button>
               </div>
             </fieldset>
           </form>

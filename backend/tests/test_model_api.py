@@ -8,6 +8,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.billing import add_price, add_project_terms
 from app.config import Settings
 from app.main import create_app
 from app.model_api import TASKS_PATH, poll_unfinished
@@ -15,6 +16,11 @@ from app.model_api import TASKS_PATH, poll_unfinished
 
 PROMPT = {"model": "doubao-seedance-2.5", "content": [{"type": "text", "text": "Clouds crossing a mountain ridge"}]}
 ARK_SECRET = "example-only-ark-key"
+VARIANTS = (
+    ("doubao-seedance-2.5-flash", "doubao-seedance-2-5-flash-261115", 30, True, (10, 5, 5)),
+    ("doubao-seedance-2.0-fast", "doubao-seedance-2-0-fast-260128", 15, False, (9, 3, 3)),
+    ("doubao-seedance-2.0-mini", "doubao-seedance-2-0-mini-260615", 15, False, (9, 3, 3)),
+)
 
 
 def _client(tmp_path, upstream, *, limit=5, key=ARK_SECRET):
@@ -71,7 +77,10 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
         owner = _key(client, csrf)
         same_project = _key(client, csrf)
         models = client.get("/v1/models", headers=owner).json()["data"]
-        assert {model["id"] for model in models} == {"doubao-seedance-2.5", "doubao-seedance-2.0"}
+        assert [model["id"] for model in models] == [
+            "doubao-seedance-2.5", "doubao-seedance-2.5-flash",
+            "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini",
+        ]
         body = {**PROMPT, "resolution": "720p", "content": [
             *PROMPT["content"], {"type": "video_url", "video_url": {"url": "https://media.example.com/sample.mp4"}},
         ]}
@@ -100,6 +109,97 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
         with client.app.state.db.connect() as connection:
             row = connection.execute("SELECT * FROM video_tasks WHERE id=?", (task_id,)).fetchone()
             assert row["settled_at"] and row["output_tokens"] == 124_102 and row["contains_video_input"] == 1
+
+
+def _media_content(media, count):
+    return [
+        {"type": media, media: {"url": f"https://media.example.com/{media}/{index}"}}
+        for index in range(count)
+    ]
+
+
+@pytest.mark.parametrize("alias, upstream_model, maximum, audio_only, limits", VARIANTS)
+def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
+    tmp_path, alias, upstream_model, maximum, audio_only, limits,
+):
+    image_limit, video_limit, audio_limit = limits
+    media_limits = {"image_url": image_limit, "video_url": video_limit, "audio_url": audio_limit}
+    references = [item for media, limit in media_limits.items() for item in _media_content(media, limit)]
+    body = {
+        "model": alias, "duration": maximum, "resolution": "480p",
+        "content": [*PROMPT["content"], *references],
+    }
+    calls = []
+
+    def upstream(request):
+        calls.append(request.method)
+        if request.method == "POST":
+            payload = json.loads(request.content)
+            assert request.url.path == TASKS_PATH
+            assert payload["model"] == upstream_model
+            assert payload["duration"] == maximum and payload["resolution"] == "480p"
+            assert [item["type"] for item in payload["content"]] == [item["type"] for item in body["content"]]
+            return httpx.Response(200, json={"id": "provider-variant"})
+        assert request.url.path == f"{TASKS_PATH}/provider-variant"
+        return httpx.Response(200, json={
+            "id": "provider-variant", "status": "succeeded", "resolution": "480p",
+            "content": {"video_url": "https://cdn.example.com/variant.mp4"},
+            "updated_at": int(datetime.now(timezone.utc).timestamp()),
+            "usage": {"completion_tokens": 42},
+        })
+
+    with _client(tmp_path, upstream) as client:
+        headers = _key(client, _register(client))
+        models = client.get("/v1/models", headers=headers).json()["data"]
+        model = next(model for model in models if model["id"] == alias)
+        assert model == {
+            "id": alias, "object": "model", "owned_by": "volcengine",
+            "video": {
+                "max_duration": maximum, "resolutions": ["480p", "720p"], "audio_only": audio_only,
+                "frame_ratio_adaptive": audio_only, "max_reference_images": image_limit,
+                "max_reference_videos": video_limit, "max_reference_audios": audio_limit,
+            },
+        }
+        assert upstream_model not in json.dumps(models)
+
+        invalid = [
+            {**body, "resolution": "1080p"},
+            {**body, "duration": maximum + 1},
+            *({**body, "content": _media_content(media, limit + 1)} for media, limit in media_limits.items()),
+        ]
+        if audio_only:
+            frame = {**_media_content("image_url", 1)[0], "role": "first_frame"}
+            invalid.append({**body, "content": [frame], "ratio": "16:9"})
+        else:
+            invalid.append({**body, "content": _media_content("audio_url", 1)})
+        for payload in invalid:
+            response = client.post(TASKS_PATH, headers=headers, json=payload)
+            assert response.status_code == 422, response.text
+        assert calls == []
+
+        project_id = client.get("/api/customer/me").json()["customer"]["projectId"]
+        with client.app.state.db.connect() as connection:
+            add_project_terms(connection, project_id=project_id, effective_at=0, enabled=True, payable_bps=10_000)
+            add_price(
+                connection, upstream_model=upstream_model, resolution="480p", contains_video_input=True,
+                effective_at=0, unit_price_micros_per_million=3_000_000, source="test",
+            )
+        created = client.post(TASKS_PATH, headers=headers, json=body)
+        assert created.status_code == 200, created.text
+        task_id = created.json()["id"]
+        status = client.get(f"{TASKS_PATH}/{task_id}", headers=headers)
+        assert status.status_code == 200
+        assert status.json() == {
+            "id": task_id, "model": alias, "status": "succeeded", "resolution": "480p",
+            "content": {"video_url": "https://cdn.example.com/variant.mp4"},
+            "usage": {"completion_tokens": 42},
+        }
+        assert calls == ["POST", "GET"]
+        with client.app.state.db.connect() as connection:
+            charge = connection.execute(
+                "SELECT upstream_model, status, amount_micros FROM video_charges WHERE task_id = ?", (task_id,),
+            ).fetchone()
+            assert tuple(charge) == (upstream_model, "priced", 126)
 
 
 def test_rejects_unknown_options_private_material_and_wrong_model_duration(tmp_path):

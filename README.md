@@ -51,7 +51,17 @@ pnpm dev
 
 提交后使用同一业务 Key 查询本站任务 ID。提交时建议提供 `Idempotency-Key`，使用同一个键重试同一请求体。上游结果 URL 可能过期。每日提交次数由项目共享，默认每个项目 5 次。配置官方 Ark Key 后，应用可后台补查正在排队或运行且已知上游 ID 的任务。
 
-初始支持范围为国内 Seedance 2.5、2.0 的标准创建和查询。Draft、4K、视频编辑、延长和取消接口仍待接入。
+下列模型支持标准视频创建和查询。通过 `GET /v1/models` 获取当前可用的业务别名和参数限制。 [方舟模型能力对比](https://docs.volcengine.com/docs/ark/video-generation-tutorial?lang=zh)
+
+| `model` 业务别名 | 方舟模型版本 | 生成时长 | 输出分辨率 |
+| --- | --- | --- | --- |
+| `doubao-seedance-2.5` | `doubao-seedance-2-5-260628` | 4–30 秒 | 480p、720p、1080p |
+| `doubao-seedance-2.5-flash` | `doubao-seedance-2-5-flash-261115` | 4–30 秒 | 480p、720p |
+| `doubao-seedance-2.0` | `doubao-seedance-2-0-260128` | 4–15 秒 | 480p、720p、1080p |
+| `doubao-seedance-2.0-fast` | `doubao-seedance-2-0-fast-260128` | 4–15 秒 | 480p、720p |
+| `doubao-seedance-2.0-mini` | `doubao-seedance-2-0-mini-260615` | 4–15 秒 | 480p、720p |
+
+`GET /v1/models` 的 `data[].id` 用于提交任务。`data[].video` 提供 `max_duration`（秒）、`resolutions`、`audio_only` 和 `max_reference_images`、`max_reference_videos`、`max_reference_audios`。`frame_ratio_adaptive` 为 `true` 时，首帧或首尾帧生成只接受省略 `ratio` 或设为 `adaptive`。单独输入参考音频适用于 2.5 和 2.5 Flash。2.0 系列使用参考音频时要一起提供参考图片或视频。API 也可将 `duration` 设为 `-1` 交由方舟选择时长。Draft、4K、视频编辑、延长和取消接口仍待接入。
 
 本地开发可以在不配置官方凭证的情况下验证注册、业务 Key 和客户页面。配置服务器环境变量 `SEEDANCE_ARK_API_KEY` 后，视频请求会发往火山并可能产生费用。自动测试使用 `MockTransport` 和临时 SQLite。
 
@@ -121,7 +131,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
   --base-url "$env:BASE_URL" --image .\portrait.png
 ```
 
-示例提交 4 秒、480p 的视频任务。`--model` 默认使用 `doubao-seedance-2.5`，可改为项目已启用的模型。`--poll-interval` 和 `--asset-timeout` 分别设置素材轮询间隔与最长等待时间，默认 2 秒和 120 秒。任务被受理后，标准输出为单条 JSON，包含 `uploadId`、`assetId`、`reference` 和 `taskId`。使用同一业务 Key 查询 `GET /api/v3/contents/generations/tasks/{id}` 获取视频任务进度。
+示例提交 4 秒、480p 的视频任务。`--model` 默认使用 `doubao-seedance-2.5`，也可填写 `GET /v1/models` 返回的业务别名。`--poll-interval` 和 `--asset-timeout` 分别设置素材轮询间隔与最长等待时间，默认 2 秒和 120 秒。任务被受理后，标准输出为单条 JSON，包含 `uploadId`、`assetId`、`reference` 和 `taskId`。使用同一业务 Key 查询 `GET /api/v3/contents/generations/tasks/{id}` 获取视频任务进度。
 
 请求失败时，标准错误输出会标明请求阶段、HTTP 状态及业务错误码（如有），进程以非零状态退出。素材进入 `Failed` 或等待超时时，可通过素材列表定位素材并查询状态。每次运行会创建新的素材组和上传记录。方舟登记或视频提交结果未知时，先核对项目记录再发起新流程。
 
@@ -149,7 +159,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 ### 配置价目与项目折扣
 
-运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。
+运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。2.5 Flash、2.0 Fast 和 2.0 Mini 的价目按各自的方舟模型版本录入，包含 480p 和 720p 的有视频输入、无视频输入档位。
 
 ```powershell
 ..\.venv\Scripts\python.exe -B -m app.billing_cli --database "$env:BILLING_DB" add-price `

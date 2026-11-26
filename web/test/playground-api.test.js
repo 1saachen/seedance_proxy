@@ -67,7 +67,10 @@ test('discovers live Seedance aliases and references staged images, videos and a
     return json({ id: taskId, status: 'succeeded', usage: { completion_tokens: 0 } });
   });
 
-  assert.deepEqual(await listVideoModels(key, controller.signal), [model]);
+  assert.deepEqual(await listVideoModels(key, controller.signal), [{
+    id: model, maxDuration: 30, resolutions: ['480p', '720p', '1080p'],
+    audioOnly: true, referenceLimits: { Image: 9, Video: 3, Audio: 3 },
+  }]);
   const run = makeRun(media);
   assert.equal(await submitVideoRun(key, run, controller.signal, (...args) => steps.push(args)), taskId);
   assert.equal((await getVideoTask(key, taskId, controller.signal)).usage.completion_tokens, 0);
@@ -77,6 +80,50 @@ test('discovers live Seedance aliases and references staged images, videos and a
   const submittedKeys = fetch.mock.calls.map(({ arguments: [, opts] }) => opts.headers['Idempotency-Key']).filter(Boolean);
   assert.equal(new Set(submittedKeys).size, 4);
   assert.equal(submittedKeys.at(-1), run.requestId);
+});
+
+test('discovers capabilities for the three additional video models and ignores models outside the catalog', async (t) => {
+  const capabilities20 = {
+    max_duration: 15, resolutions: ['480p', '720p'], audio_only: false,
+    max_reference_images: 9, max_reference_videos: 3, max_reference_audios: 3,
+  };
+  const capabilitiesFlash = {
+    ...capabilities20, max_duration: 30, audio_only: true, frame_ratio_adaptive: true,
+    max_reference_images: 10, max_reference_videos: 5, max_reference_audios: 5,
+  };
+  const flash = 'doubao-seedance-2.5-flash';
+  const fast = 'doubao-seedance-2.0-fast';
+  const mini = 'doubao-seedance-2.0-mini';
+  t.mock.method(globalThis, 'fetch', async () => json({ data: [
+    { id: 'unrelated-model' },
+    { id: 'doubao-seedance-unknown' },
+    { id: flash, video: capabilitiesFlash },
+    { id: fast, video: capabilities20 },
+    { id: mini, video: capabilities20 },
+    { id: mini },
+  ] }));
+  const baseline = {
+    maxDuration: 15, resolutions: ['480p', '720p'], audioOnly: false, referenceLimits: { Image: 9, Video: 3, Audio: 3 },
+  };
+  assert.deepEqual(await listVideoModels(key), [
+    { ...baseline, id: flash, maxDuration: 30, audioOnly: true, referenceLimits: { Image: 10, Video: 5, Audio: 5 } },
+    { ...baseline, id: fast },
+    { ...baseline, id: mini },
+  ]);
+});
+
+test('rejects a malformed capability response for an advertised video model', async (t) => {
+  const video = {
+    max_duration: 15, resolutions: ['720p'], audio_only: false,
+    max_reference_images: 9, max_reference_videos: 3, max_reference_audios: 3,
+  };
+  let payload;
+  t.mock.method(globalThis, 'fetch', async () => json({ data: [{ id: model, video: payload }] }));
+  for (const invalid of [null, { ...video, max_duration: '15' }, { ...video, resolutions: [] },
+    { ...video, audio_only: 'false' }, { ...video, max_reference_images: -1 }]) {
+    payload = invalid;
+    await assert.rejects(listVideoModels(key), { code: 'invalid_response' });
+  }
 });
 
 test('resumes a registered local reference after a failed asset status read without duplicating writes', async (t) => {

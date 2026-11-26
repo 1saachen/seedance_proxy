@@ -68,7 +68,7 @@ def _price_customer(connection: sqlite3.Connection, customer: Customer) -> None:
 
 def _task(
     connection: sqlite3.Connection, customer: Customer, task_id: str, *,
-    tokens: int | None, upstream_model: str | None = UPSTREAM_MODEL,
+    tokens: int | None, model: str = MODEL, upstream_model: str | None = UPSTREAM_MODEL,
     settled_at: str = "2025-02-12 00:00:00", status: str = "succeeded",
 ) -> None:
     row = connection.execute("""
@@ -77,7 +77,7 @@ def _task(
             requested_resolution, contains_video_input, output_tokens, created_at, settled_at
         ) VALUES (?, ?, ?, 'synthetic', ?, ?, ?, ?, '{"resolution":"720p"}', '720p', 0, ?, '2025-01-01 00:00:00', ?)
         RETURNING *
-    """, (task_id, customer.project_id, customer.key_id, MODEL, upstream_model, f"provider-{task_id}", status, tokens, settled_at)).fetchone()
+    """, (task_id, customer.project_id, customer.key_id, model, upstream_model, f"provider-{task_id}", status, tokens, settled_at)).fetchone()
     billing.record_task(connection, row)
 
 
@@ -107,6 +107,34 @@ def _import(connection: sqlite3.Connection, *lines: dict, replace: bool = False)
 
 def _report(connection: sqlite3.Connection, **options) -> dict:
     return cost_reconciliation.build_report(connection, **SCOPE, **options)
+
+
+def test_reconciliation_matches_new_video_models_by_exact_upstream_version(tmp_path: Path) -> None:
+    variants = {
+        "doubao-seedance-2.5-flash": "doubao-seedance-2-5-flash-261115",
+        "doubao-seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
+        "doubao-seedance-2.0-mini": "doubao-seedance-2-0-mini-260615",
+    }
+    with _client(tmp_path / "variants.sqlite") as client:
+        customer = _customer(client)
+        with client.app.state.db.connect() as connection:
+            _price_customer(connection, customer)
+            _import(connection, *(
+                _line(f"variant-{index}", ConfigName=version, Count=str(1000 * index))
+                for index, version in enumerate(variants.values(), start=1)
+            ))
+            before_tasks = _report(connection, confirm_usage_scope=True)["usage"]["unmatchedProviderLines"]
+            assert len(before_tasks) == len(variants)
+            assert {row["reason"] for row in before_tasks} == {"no_local_usage"}
+            for index, (alias, version) in enumerate(variants.items(), start=1):
+                _task(connection, customer, f"vid_{index:02}", tokens=1000 * index, model=alias, upstream_model=version)
+            usage = _report(connection, confirm_usage_scope=True)["usage"]
+            assert {row["upstreamModel"]: row["relayKnownTokens"] for row in usage["comparisons"]} == {
+                version: 1000 * index for index, version in enumerate(variants.values(), start=1)
+            }
+            assert all(row["tokenDifference"] == 0 for row in usage["comparisons"])
+            assert usage["unmatchedProviderLines"] == []
+            assert usage["unmatchedRelayTasks"] == []
 
 
 def test_snapshot_import_replays_reordered_pages_and_replaces_only_explicitly(tmp_path: Path) -> None:
