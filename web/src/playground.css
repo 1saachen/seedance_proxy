@@ -1,0 +1,249 @@
+.playground-key {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  padding: 1rem 1.2rem;
+}
+
+.playground-key h2 {
+  margin-bottom: 0.25rem;
+  font-size: 1.1rem;
+}
+
+.playground-key p:not(.playground-key-message),
+.playground-hint {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.playground-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.playground-key-actions input {
+  flex: 1 1 11rem;
+  width: 11rem;
+  min-width: 0;
+}
+
+.playground-key-message {
+  grid-column: 1 / -1;
+}
+
+.playground-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.playground-layout > .panel {
+  min-width: 0;
+}
+
+.playground-form {
+  padding: 0 1.2rem 1.05rem;
+}
+
+.playground-form fieldset {
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.playground-field {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.playground-field label {
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.playground-field label small {
+  margin-left: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+.playground-field select,
+.playground-field textarea {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #aebed4;
+  border-radius: 0.46rem;
+  background: var(--paper);
+  color: var(--text);
+  font: inherit;
+}
+
+.playground-field textarea {
+  resize: vertical;
+}
+
+.playground-field :is(select, textarea, input):disabled {
+  background: #f5f8fc;
+  color: var(--muted);
+}
+
+.playground-field input[type='file']::file-selector-button {
+  margin-right: 0.55rem;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.32rem;
+  background: var(--fog);
+  color: var(--navy);
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.playground-field-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.playground-files {
+  display: grid;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 0.42rem;
+  list-style: none;
+}
+
+.playground-files li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  font-size: 0.875rem;
+}
+
+.playground-files li + li {
+  border-top: 1px solid var(--line);
+}
+
+.playground-file-type {
+  color: var(--muted);
+}
+
+.playground-file-name {
+  overflow-wrap: anywhere;
+}
+
+.playground-model-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.2rem;
+  color: #852232;
+  font-size: 0.875rem;
+}
+
+.playground-submit {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.15rem;
+}
+
+.playground-result {
+  padding-bottom: 1rem;
+}
+
+.playground-result .panel-head {
+  align-items: center;
+}
+
+.playground-screen,
+.playground-result video {
+  width: calc(100% - 2.4rem);
+  aspect-ratio: 16 / 9;
+  margin-inline: 1.2rem;
+  border-radius: 0.5rem;
+  background: var(--navy);
+  color: #e7effb;
+}
+
+.playground-screen {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.65rem;
+  min-height: 8.5rem;
+  padding: 0.8rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.playground-screen-icon {
+  display: grid;
+  width: 2.7rem;
+  aspect-ratio: 1;
+  place-items: center;
+  padding-left: 0.1rem;
+  border: 1px solid #7c94bc;
+  border-radius: 100%;
+  color: #b4c8e9;
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.playground-result video {
+  display: block;
+  object-fit: contain;
+}
+
+.playground-preview-message,
+.playground-preview-actions,
+.playground-result-message,
+.playground-task-facts {
+  margin: 0.75rem 1.2rem 0;
+}
+
+.playground-preview-message,
+.playground-task-facts dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.playground-task-facts {
+  display: grid;
+  gap: 0.65rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+
+.playground-task-facts dd {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 70rem) {
+  .playground-key {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 57rem) {
+  .playground-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .playground-layout > .panel + .panel {
+    margin-top: 0;
+  }
+}

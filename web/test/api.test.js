@@ -78,3 +78,25 @@ test('expired sessions preserve status and do not replay mutations', async (t) =
   );
   assert.equal(fetch.mock.callCount(), 1);
 });
+
+test('task records use only the customer session and key verification stays on the same origin', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async (path) =>
+    path.endsWith('/playground/key') ? new Response(null, { status: 204 }) : json({ items: [] }),
+  );
+  const controller = new AbortController();
+  const taskId = `vid_${'c'.repeat(32)}`;
+  await customerApi.tasks({ taskId, fromDate: '2026-11-01', status: 'queued', page: 2 }, controller.signal);
+  await customerApi.verifyPlaygroundKey('fixture-only', controller.signal);
+
+  const [[list, listOptions], [verify, verifyOptions]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  assert.equal(list, `/api/customer/tasks?page=2&pageSize=20&taskId=${taskId}&fromDate=2026-11-01&status=queued`);
+  assert.equal(listOptions.credentials, 'same-origin');
+  assert.equal(listOptions.cache, 'no-store');
+  assert.equal(listOptions.headers.Authorization, undefined);
+  assert.equal(listOptions.signal, controller.signal);
+  assert.equal(verify, '/api/customer/playground/key');
+  assert.equal(verifyOptions.headers.Authorization, 'Bearer fixture-only');
+  assert.equal(verifyOptions.credentials, 'same-origin');
+  assert.equal(verifyOptions.redirect, 'error');
+  assert.equal(verifyOptions.signal, controller.signal);
+});

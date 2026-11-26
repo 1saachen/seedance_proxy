@@ -7,15 +7,17 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, csrfToken, signal } = {}) {
+async function request(path, { method = 'GET', body, csrfToken, bearerKey, signal } = {}) {
   const headers = { Accept: 'application/json' };
   if (body) headers['Content-Type'] = 'application/json';
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  if (bearerKey) headers.Authorization = `Bearer ${bearerKey}`;
   const response = await fetch(`${customerPath}${path}`, {
     method,
     headers,
     credentials: 'same-origin',
     cache: 'no-store',
+    ...(bearerKey ? { redirect: 'error' } : {}),
     body: body ? JSON.stringify(body) : undefined,
     signal,
   });
@@ -30,8 +32,16 @@ export const customerApi = {
   register: (body) => request('/register', { method: 'POST', body }),
   logout: (csrfToken) => request('/logout', { method: 'POST', csrfToken }),
   keys: (signal) => request('/keys', { signal }),
-  createKey: (name, csrfToken) => request('/keys', { method: 'POST', body: { name }, csrfToken }),
+  createKey: (name, csrfToken, signal) => request('/keys', { method: 'POST', body: { name }, csrfToken, signal }),
   revokeKey: (id, csrfToken) => request(`/keys/${encodeURIComponent(id)}`, { method: 'DELETE', csrfToken }),
+  verifyPlaygroundKey: (key, signal) => request('/playground/key', { bearerKey: key, signal }),
+  tasks: ({ taskId, fromDate, toDate, status, page = 1, pageSize = 20 } = {}, signal) => {
+    const query = new URLSearchParams({ page, pageSize });
+    for (const [name, value] of Object.entries({ taskId, fromDate, toDate, status })) {
+      if (value) query.set(name, value);
+    }
+    return request(`/tasks?${query}`, { signal });
+  },
   usage: (month, signal) => request(`/usage?${new URLSearchParams({ month })}`, { signal }),
   billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
   billingExportUrl: (id) =>

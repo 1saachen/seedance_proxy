@@ -1,51 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { customerApi, requestErrorMessage } from './api.js';
+import { Playground } from './playground.jsx';
+import { TaskRecords } from './task-records.jsx';
+import { formatDate, formatNumber, Status } from './workbench-format.jsx';
 import { Wordmark } from './wordmark.jsx';
 
 const sections = [
   { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
   { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
+  { id: 'playground', label: '视频体验', mark: '▷', description: '运行一次 Seedance 生成并查看当前结果。' },
+  { id: 'tasks', label: '任务记录', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的生成记录。' },
   { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和任务用量。' },
 ];
-
-const statusNames = {
-  active: '有效',
-  disabled: '已撤销',
-  revoked: '已撤销',
-  queued: '排队中',
-  running: '运行中',
-  pending: '待处理',
-  submitting: '提交中',
-  succeeded: '成功',
-  completed: '成功',
-  failed: '失败',
-  canceled: '已取消',
-  cancelled: '已取消',
-  expired: '已过期',
-  unknown: '状态待确认',
-};
-
-const dateFormatter = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  dateStyle: 'medium',
-  timeStyle: 'short',
-});
-const numberFormatter = new Intl.NumberFormat('zh-CN');
-
-function formatDate(value) {
-  if (value == null) return '—';
-  let timestamp = value;
-  if (typeof value === 'number' && value < 10 ** 11) timestamp = value * 1000;
-  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
-    timestamp = `${value.replace(' ', 'T')}Z`;
-  }
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? '—' : dateFormatter.format(date);
-}
-
-function formatNumber(value) {
-  return value == null ? '—' : numberFormatter.format(value);
-}
 
 function formatBillingAmount(billing) {
   if (billing?.amount != null) return billing.amount;
@@ -106,19 +72,6 @@ function LoadState({ state, children }) {
       </p>
     );
   return children(state.data);
-}
-
-function Status({ value }) {
-  const tone = ['active', 'succeeded', 'completed'].includes(value)
-    ? 'positive'
-    : value === 'failed'
-      ? 'negative'
-      : 'neutral';
-  return (
-    <span className={`status ${tone}`}>
-      {Object.hasOwn(statusNames, value) ? statusNames[value] : value || '未知'}
-    </span>
-  );
 }
 
 function UsageSummary({ summary }) {
@@ -674,6 +627,7 @@ function Billing({ month, setMonth, maxMonth, usage, onExpired }) {
 
 export function Workspace({ session, onSessionEnded }) {
   const [section, setSection] = useState(readSection);
+  const [videoKey, setVideoKey] = useState('');
   const [month, setMonth] = useState(currentMonth);
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState('');
@@ -756,6 +710,17 @@ export function Workspace({ session, onSessionEnded }) {
             <SetupGuide />
           </>
         )}
+        <div hidden={section.id !== 'playground'}>
+          <Playground
+            active={section.id === 'playground'}
+            csrfToken={session.csrfToken}
+            onExpired={onSessionEnded}
+            videoKey={videoKey}
+            setVideoKey={setVideoKey}
+            onKeysChanged={keys.refresh}
+          />
+        </div>
+        {section.id === 'tasks' && <TaskRecords videoKey={videoKey} onExpired={onSessionEnded} />}
         {section.id === 'billing' && (
           <Billing month={month} setMonth={setMonth} maxMonth={maxMonth} usage={usage} onExpired={onSessionEnded} />
         )}

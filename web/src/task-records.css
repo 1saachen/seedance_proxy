@@ -1,0 +1,260 @@
+.task-records {
+  container-type: inline-size;
+}
+
+.task-records .panel-head {
+  flex-wrap: nowrap;
+}
+
+.task-record-filters {
+  display: grid;
+  grid-template-columns: minmax(9rem, 1.8fr) minmax(7.5rem, 1fr) repeat(2, minmax(8rem, 1fr)) auto;
+  gap: 0.65rem;
+  align-items: end;
+  padding: 0 1.2rem 1.15rem;
+}
+
+.task-record-filters label,
+.task-result-form label {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
+}
+
+.task-record-filters input,
+.task-record-filters select {
+  min-width: 0;
+}
+
+.task-record-filters select {
+  min-height: 2.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #aebed4;
+  border-radius: 0.46rem;
+  background: var(--paper);
+  color: var(--text);
+  font: inherit;
+}
+
+.task-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.task-filter-error {
+  grid-column: 1 / -1;
+}
+
+.task-record-table {
+  border-radius: 0;
+}
+
+.task-record-table th,
+.task-record-table td {
+  padding-inline: 0.75rem;
+}
+
+.task-record-table :is(th, td):where(:first-child) {
+  padding-inline-start: 1.2rem;
+}
+
+.task-record-table :is(th, td):where(:last-child) {
+  padding-inline-end: 1.2rem;
+}
+
+.task-record-table tbody th {
+  min-width: 12rem;
+}
+
+.task-record-id {
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  color: var(--navy);
+}
+
+.task-record-meta {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.task-record-error {
+  min-width: 7.5rem;
+  font-size: 0.84rem;
+}
+
+.task-record-tokens,
+.task-record-times {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.task-record-tokens span {
+  display: none;
+}
+
+.task-record-times span,
+.task-record-tokens span {
+  margin-inline-end: 0.2rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.task-record-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  padding: 0.75rem 1.2rem;
+  border-top: 1px solid var(--line);
+}
+
+.task-record-pagination p,
+.task-result-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.task-result-dialog {
+  width: min(calc(100% - 2rem), 37rem);
+  max-height: calc(100dvh - 2rem);
+  padding: 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--paper);
+  color: var(--text);
+  overscroll-behavior: contain;
+}
+
+.task-result-dialog::backdrop {
+  background: #10254a88;
+}
+
+.task-result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.task-result-header h2 {
+  margin-bottom: 0.35rem;
+  font-size: 1.15rem;
+}
+
+.task-result-header code {
+  color: var(--muted);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.task-result-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: end;
+  margin-block: 1rem;
+}
+
+.task-result-media {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.task-result-media video {
+  display: block;
+  width: 100%;
+  max-height: min(64dvh, 28rem);
+  aspect-ratio: 16 / 9;
+  border-radius: 0.46rem;
+  background: var(--navy);
+  object-fit: contain;
+}
+
+.task-result-media :is(.playground-preview-actions, .playground-preview-message) {
+  margin: 0;
+}
+
+@container (max-width: 51rem) {
+  .task-record-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .task-filter-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 44rem) {
+  .task-record-table table,
+  .task-record-table tbody {
+    display: block;
+  }
+
+  .task-record-table thead {
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+
+  .task-record-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 0.5rem 0.65rem;
+    padding: 0.8rem 1.2rem;
+  }
+
+  .task-record-table tbody :is(th, td) {
+    min-width: 0;
+    padding: 0;
+  }
+
+  .task-record-table tbody th {
+    grid-column: 1 / -1;
+  }
+
+  .task-record-tokens,
+  .task-record-action {
+    justify-self: end;
+  }
+
+  .task-record-tokens span {
+    display: inline;
+  }
+
+  .task-record-times {
+    white-space: normal;
+  }
+}
+
+@container (max-width: 27rem) {
+  .task-record-filters label:first-child,
+  .task-record-filters label:nth-child(2) {
+    grid-column: 1 / -1;
+  }
+}
+
+@container (max-width: 20rem) {
+  .task-record-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .task-record-times {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 26rem) {
+  .task-result-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

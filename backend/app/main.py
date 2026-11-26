@@ -7,7 +7,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 import httpx
 
-from . import accounts, assets, billing, customer_billing, model_api, provider_costs, statements, upload_registration, uploads, usage
+from . import (
+    accounts, assets, billing, customer_billing, customer_tasks, model_api,
+    provider_costs, statements, upload_registration, uploads, usage,
+)
 from .config import Settings
 from .db import Database
 from .upload_storage import LocalUploadStorage, UploadStorage
@@ -120,6 +123,7 @@ def create_app(
     app.include_router(upload_registration.router)
     app.include_router(model_api.router)
     app.include_router(usage.router)
+    app.include_router(customer_tasks.router)
     app.include_router(customer_billing.router)
     return app
 

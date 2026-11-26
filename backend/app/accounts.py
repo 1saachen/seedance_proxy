@@ -224,24 +224,41 @@ def require_customer(request: Request) -> CustomerPrincipal:
     return CustomerPrincipal(**dict(customer))
 
 
+def _find_business_key(request: Request, credentials: HTTPAuthorizationCredentials | None) -> BusinessPrincipal | None:
+    secret = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else ""
+    if not (secret.startswith(KEY_PREFIX) and len(secret) == len(KEY_PREFIX) + 43 and secret.isascii()):
+        return None
+    with request.app.state.db.connect() as connection:
+        key = connection.execute(
+            "SELECT id, project_id FROM business_keys WHERE secret_hash = ? AND revoked_at IS NULL",
+            (_digest(secret),),
+        ).fetchone()
+    return BusinessPrincipal(project_id=key["project_id"], key_id=key["id"]) if key is not None else None
+
+
 def require_business_key(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
 ) -> BusinessPrincipal:
-    secret = credentials.credentials if credentials and credentials.scheme.lower() == "bearer" else ""
-    key = None
-    if secret.startswith(KEY_PREFIX) and len(secret) == len(KEY_PREFIX) + 43 and secret.isascii():
-        with request.app.state.db.connect() as connection:
-            key = connection.execute(
-                "SELECT id, project_id FROM business_keys WHERE secret_hash = ? AND revoked_at IS NULL",
-                (_digest(secret),),
-            ).fetchone()
-    if key is None:
+    principal = _find_business_key(request, credentials)
+    if principal is None:
         raise _error(401, "invalid_api_key", "请提供有效的业务 API Key", {"WWW-Authenticate": "Bearer"})
-    return BusinessPrincipal(project_id=key["project_id"], key_id=key["id"])
+    return principal
 
 
 CurrentCustomer = Annotated[CustomerPrincipal, Depends(require_customer)]
+
+
+@router.get("/playground/key", status_code=204)
+def check_playground_key(
+    request: Request,
+    customer: CurrentCustomer,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
+) -> Response:
+    key = _find_business_key(request, credentials)
+    if key is None or key.project_id != customer.project_id:
+        raise _error(403, "invalid_api_key", "请提供当前项目有效的业务 API Key")
+    return Response(status_code=204)
 
 
 @router.post("/register", status_code=201)
