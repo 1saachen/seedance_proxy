@@ -15,12 +15,14 @@ from app.accounts import initialize as initialize_accounts
 from app.config import Settings
 from app.main import create_app
 from app.model_api import TASKS_PATH
+from app.statements import BEIJING
 
 
 MODEL = "doubao-seedance-2.5"
 UPSTREAM_MODEL = "doubao-seedance-2-5-260628"
 START = datetime(2025, 1, 1, tzinfo=timezone.utc)
 CHANGE = START + timedelta(days=1)
+SETTLED_AT = int((CHANGE + timedelta(minutes=1)).timestamp())
 TEXT = {"type": "text", "text": "Clouds crossing a mountain ridge"}
 VIDEO = {"type": "video_url", "video_url": {"url": "https://media.example.com/source.mp4"}}
 
@@ -135,7 +137,8 @@ def test_charge_snapshots_task_time_price_dimensions_discount_and_customer_scope
         foreign = _create(client, bob)
         for task_number, (task_id, owner) in enumerate(((before, alice), (boundary, alice), (video, alice), (foreign, bob)), 1):
             ark.results[f"provider-task-{task_number}"] = {
-                "status": "succeeded", "resolution": "720p", "usage": {"completion_tokens": 1, "total_tokens": 17},
+                "status": "succeeded", "resolution": "720p", "updated_at": SETTLED_AT,
+                "usage": {"completion_tokens": 1, "total_tokens": 17},
             }
             assert _refresh(client, owner, task_id)["status"] == "succeeded"
 
@@ -211,12 +214,48 @@ def test_missing_inputs_enter_pending_and_explicit_zero_is_priced(tmp_path: Path
         ]
         for idx, (details, status, reason, tokens, amount) in enumerate(cases, 1):
             task = _create(client, customer)
-            ark.results[f"provider-task-{idx}"] = {"status": "succeeded", **details}
+            ark.results[f"provider-task-{idx}"] = {"status": "succeeded", "updated_at": SETTLED_AT, **details}
             _refresh(client, customer, task)
             row = _charge(client, task)
             assert (row["status"], row["pending_reason"], row["output_tokens"], row["amount_micros"]) == (
                 status, reason, tokens, amount,
             )
+
+
+def test_success_without_valid_provider_settlement_remains_outside_monthly_billing(tmp_path: Path) -> None:
+    ark = MockArk()
+    with _client(tmp_path / "unattributed.sqlite", httpx.MockTransport(ark)) as client:
+        customer = _customer(client)
+        with client.app.state.db.connect() as connection:
+            _terms(connection, customer, 10000)
+            price = _price(connection, 3_000_000)
+
+        for idx, provider_time in enumerate(({}, {"updated_at": "invalid"}, {"updated_at": int(START.timestamp())}), 1):
+            task_id = _create(client, customer)
+            ark.results[f"provider-task-{idx}"] = {
+                "status": "succeeded", "resolution": "720p", "usage": {"completion_tokens": 42}, **provider_time,
+            }
+            result = _refresh(client, customer, task_id)
+            assert result["status"] == "succeeded" and result["usage"]["completion_tokens"] == 42
+            assert _refresh(client, customer, task_id) == result
+            line = _charge(client, task_id)
+            assert (line["status"], line["pending_reason"], line["settled_at"], line["amount_micros"]) == (
+                "pending", "missing_settlement", None, None,
+            )
+            assert line["output_tokens"] == 42 and line["price_id"] == price
+
+        assert len(ark.queries) == 3
+        usage = client.get("/api/customer/usage", params={"month": "2025-01"}, headers=customer.usage_auth).json()
+        assert usage["summary"] == {"calls": 3, "successful": 3, "outputTokens": 126, "pricedCalls": 0}
+        assert all(item["settledAt"] is None for item in usage["items"])
+        for month in {"2025-01", datetime.now(BEIJING).strftime("%Y-%m")}:
+            preview = client.get("/api/customer/billing", params={"month": month}, headers=customer.usage_auth)
+            assert preview.status_code == 200
+            assert preview.json()["items"] == []
+            assert preview.json()["summary"] == {
+                "usageCalls": 0, "lateCalls": 0, "pendingCalls": 0,
+                "listAmount": "0.000000", "amount": "0.000000", "payableAmount": "0.00",
+            }
 
 
 def test_reconciliation_prices_pending_after_rate_added_and_is_idempotent(tmp_path: Path) -> None:
@@ -226,7 +265,9 @@ def test_reconciliation_prices_pending_after_rate_added_and_is_idempotent(tmp_pa
         with client.app.state.db.connect() as connection:
             _terms(connection, customer, 8000)
         task = _create(client, customer)
-        ark.results["provider-task-1"] = {"status": "succeeded", "resolution": "720p", "usage": {"completion_tokens": 1}}
+        ark.results["provider-task-1"] = {
+            "status": "succeeded", "resolution": "720p", "updated_at": SETTLED_AT, "usage": {"completion_tokens": 1},
+        }
         _refresh(client, customer, task)
         assert _charge(client, task)["pending_reason"] == "missing_price"
         with client.app.state.db.connect() as connection:
@@ -260,7 +301,9 @@ def test_concurrent_success_observations_record_one_charge(tmp_path: Path) -> No
             _terms(connection, customer, 9000)
             _price(connection, 10_000_000)
         task = _create(client, customer, idempotency_key="concurrent-charge")
-        ark.results["provider-task-1"] = {"status": "succeeded", "resolution": "720p", "usage": {"completion_tokens": 10}}
+        ark.results["provider-task-1"] = {
+            "status": "succeeded", "resolution": "720p", "updated_at": SETTLED_AT, "usage": {"completion_tokens": 10},
+        }
         with ThreadPoolExecutor(max_workers=2) as workers:
             first = workers.submit(_refresh, client, customer, task)
             second = workers.submit(_refresh, client, customer, task)
@@ -286,7 +329,9 @@ def test_charge_failure_preserves_success_and_restarts_with_a_single_reconciled_
                 BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END
             """)
         task = _create(client, customer)
-        ark.results["provider-task-1"] = {"status": "succeeded", "resolution": "720p", "usage": {"completion_tokens": 42}}
+        ark.results["provider-task-1"] = {
+            "status": "succeeded", "resolution": "720p", "updated_at": SETTLED_AT, "usage": {"completion_tokens": 42},
+        }
         terminal = _refresh(client, customer, task)
         assert terminal["status"] == "succeeded" and terminal["usage"]["completion_tokens"] == 42
         with client.app.state.db.connect() as connection:

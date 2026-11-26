@@ -362,14 +362,17 @@ async def _refresh_task(app: FastAPI, row: sqlite3.Row, headers: dict[str, str])
     if status is None or ("id" in data and data["id"] != row["upstream_id"]):
         raise _error(502, "video_status_unavailable", "Seedance task status is temporarily unavailable")
     result, output_tokens = _provider_result(data, status)
+    settled_at = None
+    if status in TERMINAL_STATES:
+        settled_at = _provider_settlement_time(data, row["created_at"])
+        if status != "succeeded" and settled_at is None:
+            settled_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with app.state.db.connect() as connection:
         settled = connection.execute(
             """UPDATE video_tasks
-               SET status = ?, result_json = ?, output_tokens = ?,
-                   settled_at = CASE WHEN ? THEN COALESCE(?, CURRENT_TIMESTAMP) ELSE NULL END
+               SET status = ?, result_json = ?, output_tokens = ?, settled_at = ?
                WHERE id = ? AND (status = 'queued' OR (status = 'running' AND ? <> 'queued')) RETURNING *""",
-            (status, json.dumps(result), output_tokens, status in TERMINAL_STATES,
-             _provider_settlement_time(data, row["created_at"]), row["id"], status),
+            (status, json.dumps(result), output_tokens, settled_at, row["id"], status),
         ).fetchone()
     if settled is not None and status == "succeeded":
         try:

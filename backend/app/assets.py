@@ -171,7 +171,7 @@ async def _provider_request(request: Request, action: Action, upstream_project: 
             raise _submission_unknown() from error
         raise _error(502, "asset_provider_unavailable", "暂时无法查询方舟素材") from error
 
-    if action != "GetAsset" and response.status_code >= 500:
+    if action != "GetAsset" and (response.status_code == 408 or response.status_code >= 500):
         raise _submission_unknown()
     try:
         data = response.json()

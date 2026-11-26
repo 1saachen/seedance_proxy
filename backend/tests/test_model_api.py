@@ -61,6 +61,7 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
             "id": "provider-task-01", "model": "hidden-upstream-model", "status": "succeeded",
             "content": {"video_url": "https://cdn.example.com/result.mp4?signature=sample", "extra": ARK_SECRET},
             "duration": 5, "resolution": "720p", "ratio": "16:9",
+            "updated_at": int(datetime.now(timezone.utc).timestamp()),
             "usage": {"completion_tokens": 124_102, "total_tokens": 124_102, "extra": ARK_SECRET},
         })
 

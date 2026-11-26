@@ -119,7 +119,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 请求失败时，标准错误输出会标明请求阶段、HTTP 状态及业务错误码（如有），进程以非零状态退出。素材进入 `Failed` 或等待超时时，可通过素材列表定位素材并查询状态。每次运行会创建新的素材组和上传记录。方舟登记或视频提交结果未知时，先核对项目记录再发起新流程。
 
-在 `backend/` 目录运行以下测试，可在本机使用临时数据库、暂存目录和模拟方舟复现完整命令行调用，并检查客户隔离及失败处理。
+在 `backend/` 目录运行以下测试，可在本机使用临时数据库、暂存目录和模拟方舟复现从文件上传、登记和生成任务，到计价、账单冻结和供应商账单对比的全流程。用例还会检查客户隔离及失败处理。
 
 ```powershell
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider tests/test_asset_workflow_cli.py
@@ -161,7 +161,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 ## 月度账单
 
-账单按北京时间的任务结束月份归集，工作台的用量明细仍按任务创建月份查询。已计价任务的折后金额先按微元汇总，再对账单总额四舍五入至分。待计价记录补齐后参与归集，缺少结束时间的记录无法归入账期。
+账单按北京时间的任务结束月份归集，工作台的用量明细仍按任务创建月份查询。成功任务以方舟查询响应中有效的 `updated_at` 确认结束时间。缺少有效时间时保留已返回的用量。已启用计费的任务进入待计价状态，暂缓归集。已计价任务的折后金额先按微元汇总，再对账单总额四舍五入至分。 [方舟任务查询](https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh)
 
 本月及尚未确认的往期账单显示预估。运营确认已结束的账期后，金额、任务明细及确认时待计价数量一并冻结。同一账期重复确认会返回已有账单。确认后才补齐的用量列入来源账期之后按时间最早的开放账期，其明细保留 `sourceMonth`，标记为 `late_usage`。
 
@@ -217,7 +217,7 @@ cd backend
 ..\.venv\Scripts\python.exe -B -m pytest -p no:cacheprovider
 ```
 
-前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。真实火山账单联调、税费口径、Native 支付、开票和生产环境验收列入首期后续交付。
+前端可用 `pnpm test` 验证 API 客户端，使用 `pnpm build` 生成静态文件。设置正式的 `SEEDANCE_SITE_ORIGIN` 后可生成公开首页的 canonical 和站点地图。真实方舟联调、火山月账单样本核验和生产计费口径仍待确认。Native 支付、开票和公开站点 SEO 已暂停。 [工作计划](docs/WORK_PLAN.md)
 
 ## 许可证
 

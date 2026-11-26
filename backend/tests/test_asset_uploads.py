@@ -86,6 +86,8 @@ class RecordingArkAssets:
             self.submissions.append(body)
             if self.failure == "timeout":
                 raise httpx.ReadTimeout("mock provider timeout", request=request)
+            if self.failure == "http-408":
+                return httpx.Response(408, json={"ResponseMetadata": {"Error": {"Code": "RequestTimeout"}}})
             if self.failure == "rejected":
                 return httpx.Response(400, json={"ResponseMetadata": {"Error": {"Code": "InvalidParameter"}}})
             return httpx.Response(200, json={"Result": {"Id": "asset-official"}})
@@ -612,9 +614,12 @@ def test_registering_local_upload_scopes_owner_and_serves_expiring_ark_source(tm
         assert client.get("/api/asset/get", headers=auth, params={"assetId": asset["id"]}).json()["asset"] == active
 
 
-def test_unconfirmed_registration_keeps_source_and_prevents_second_submission(tmp_path: Path, png: bytes) -> None:
+@pytest.mark.parametrize("failure", ("timeout", "http-408"))
+def test_unconfirmed_registration_keeps_source_and_prevents_second_submission(
+    tmp_path: Path, png: bytes, failure: str,
+) -> None:
     provider = RecordingArkAssets()
-    provider.failure = "timeout"
+    provider.failure = failure
     path = tmp_path / "pending.sqlite"
     with _client(path, ark_asset_handler=provider, upload_public_origin=PUBLIC_ORIGIN) as client:
         auth, _ = _key(client, _register(client, "alice@example.com"), "main")
