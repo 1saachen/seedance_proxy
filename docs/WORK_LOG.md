@@ -6,6 +6,7 @@
 
 ### 参考开源中转站调整前端
 
+- 首页首屏文案聚焦视频生成，标题为「一句描述，一段视频」，补充参考素材、工作台和 API 的说明。
 - 首页增加可切换和复制的请求示例及 Seedance 规格对照表。工作台以本月用量为首屏内容，将密钥、视频体验和任务记录串成接入步骤，并统一密钥和任务表格的视觉层次。 [New API 界面参考](https://github.com/QuantumNous/new-api#screenshots) · [LiteLLM 工作台参考](https://docs.litellm.ai/docs/simple_proxy/#admin-ui)
 - 14 项前端测试与 Vite 构建通过。Chromium 在 1440、390、320 像素宽度验证请求示例的键盘切换和复制、模型表、模拟登录、密钥、视频任务和账单。关闭 JavaScript 后仍可阅读首页命令与模型表。
 - 本轮提供本机模拟预览，尚未切换线上静态文件。
