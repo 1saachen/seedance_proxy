@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app import billing, cost_reconciliation, provider_costs, statements
+from app import billing, cost_reconciliation, general_models, provider_costs, statements
 from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.main import create_app
@@ -23,6 +24,13 @@ PAYER = "1000000001"
 OWNER = "1000000002"
 PRODUCT = "ark"
 SCOPE = {"payer_id": PAYER, "owner_id": OWNER, "product": PRODUCT, "month": MONTH}
+TEXT_MODEL = "doubao-seed-2.1-lite"
+TEXT_UPSTREAM = general_models.TEXT_MODELS[TEXT_MODEL]
+IMAGE_MODEL = "doubao-seedream-5.5"
+IMAGE_UPSTREAM = general_models.IMAGE_MODELS[IMAGE_MODEL]
+PRO_IMAGE_MODEL = "doubao-seedream-5.0-pro"
+PRO_IMAGE_UPSTREAM = general_models.IMAGE_MODELS[PRO_IMAGE_MODEL]
+START = int(datetime.fromisoformat(f"{MONTH}-01T00:00:00+08:00").timestamp())
 
 
 @dataclass(frozen=True)
@@ -91,6 +99,26 @@ def _line(line_id: str = "sample-line-001", **changes) -> dict:
         "CouponAmount": "0.101", "RoundAmount": "0.001", "UnpaidAmount": "0", "CreditCarriedAmount": "0.001",
         **changes,
     }
+
+
+def _call(
+    connection: sqlite3.Connection, customer: Customer, local_id: str, *, model: str = TEXT_MODEL,
+    prompt: int | None = None, cached: int | None = None, completion: int | None = None,
+    inputs: int | None = None, generated: int | None = None, sizes: list[str] | None = None,
+    settled_at: int | None = START, status: str = "succeeded", provider_id: str | None = None,
+) -> None:
+    modality = "text" if model in general_models.TEXT_MODELS else "image"
+    upstream = (general_models.TEXT_MODELS if modality == "text" else general_models.IMAGE_MODELS)[model]
+    total = prompt + completion if prompt is not None and completion is not None else None
+    connection.execute("""
+        INSERT INTO general_model_calls (
+            id, project_id, key_id, modality, model, upstream_model, status, created_at, settled_at,
+            prompt_tokens, cached_prompt_tokens, completion_tokens, total_tokens, input_images, generated_images,
+            image_sizes_json, provider_request_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (local_id, customer.project_id, customer.key_id, modality, model, upstream, status, START, settled_at,
+          prompt, cached, completion, total, inputs, generated, json.dumps(sizes) if sizes is not None else None,
+          provider_id))
 
 
 def _envelope(*lines: dict, total: int | None = None) -> dict:
@@ -320,6 +348,154 @@ def test_reconciliation_uses_only_verified_model_period_unit_and_usage_dimension
             assert {row["taskId"]: row["reason"] for row in unknown_model["unmatchedRelayTasks"]}["vid_missing_version"] == "missing_upstream_model"
 
 
+def test_text_and_image_totals_require_verified_compatible_dimensions(tmp_path: Path) -> None:
+    dimensions = {
+        TEXT_UPSTREAM: {"input": "text_uncached_input_tokens", "cache": "text_cached_input_tokens",
+                        "output": "text_output_tokens"},
+        IMAGE_UPSTREAM: {"input": "image_input_count", "small": "image_output_count_le_2_61m",
+                         "medium": "image_output_count_2_61m_to_4_63m", "large": "image_output_count_4_63m_to_8_30m"},
+        PRO_IMAGE_UPSTREAM: {"input": "image_additional_input_count", "output": "image_output_count_gt_2_61m"},
+    }
+    with _client(tmp_path / "model-dimensions.sqlite") as client:
+        alice = _customer(client)
+        with client.app.state.db.connect() as connection:
+            _call(connection, alice, "chatcmpl-synthetic", prompt=1000, cached=250, completion=50)
+            _call(connection, alice, "chatcmpl-other-period", prompt=500, cached=0, completion=10, settled_at=START - 1)
+            for index, size in enumerate(("1500x1500", "2048x2048", "3840x2160")):
+                _call(connection, alice, f"img_{index}", model=IMAGE_MODEL, inputs=index, generated=1, sizes=[size])
+            _call(connection, alice, "img_pro", model=PRO_IMAGE_MODEL, inputs=3, generated=1, sizes=["2048x2048"])
+            lines = [
+                _line("text-input", ConfigName="verified text config", ElementCode="input", Unit="千 tokens", Count="0.75"),
+                _line("text-cache", ConfigName=TEXT_UPSTREAM, ElementCode="cache", Count="250"),
+                _line("text-output", ConfigName=TEXT_UPSTREAM, ElementCode="output", Count="50"),
+                _line("image-input", ConfigName=IMAGE_UPSTREAM, ElementCode="input", Unit="张", Count="3"),
+                _line("image-small", ConfigName=IMAGE_UPSTREAM, ElementCode="small", Unit="image", Count="1"),
+                _line("image-medium", ConfigName=IMAGE_UPSTREAM, ElementCode="medium", Unit="images", Count="1"),
+                _line("image-large", ConfigName=IMAGE_UPSTREAM, ElementCode="large", Unit="张", Count="1"),
+                _line("pro-additional", ConfigName=PRO_IMAGE_UPSTREAM, ElementCode="input", Unit="张", Count="2"),
+                _line("pro-output", ConfigName=PRO_IMAGE_UPSTREAM, ElementCode="output", Unit="张", Count="1"),
+            ]
+            _import(connection, *lines)
+            with pytest.raises(ValueError, match="explicit confirmation"):
+                _report(connection, dimension_map=dimensions)
+            with pytest.raises(ValueError, match="incompatible"):
+                _report(connection, confirm_usage_scope=True, dimension_map={TEXT_UPSTREAM: {"input": "image_input_count"}})
+
+            options = {"confirm_usage_scope": True, "model_map": {"verified text config": TEXT_UPSTREAM}}
+            unmapped = _report(connection, **options)["usage"]
+            assert unmapped["generalModelComparisons"] == []
+            assert {item["reason"] for item in unmapped["unmatchedProviderLines"]} == {"unverified_usage_dimension"}
+
+            usage = _report(connection, **options, dimension_map=dimensions)["usage"]
+            assert usage["comparisons"] == [] and usage["unmatchedProviderLines"] == usage["unmatchedRelayCalls"] == []
+            comparisons = {item["dimension"]: item for item in usage["generalModelComparisons"]}
+            assert len(comparisons) == len(lines)
+            assert all(item["difference"] == 0 for item in comparisons.values())
+            assert comparisons["text_uncached_input_tokens"]["providerCount"] == 750
+            assert comparisons["image_input_count"]["relayRequestCount"] == 3
+            assert comparisons["image_additional_input_count"]["relayKnownCount"] == 2
+
+            _call(connection, alice, "chatcmpl-legacy", prompt=100, completion=2, settled_at=None)
+            _call(connection, alice, "chatcmpl-missing-cache", prompt=100, completion=0)
+            _call(connection, alice, "img-no-sizes", model=IMAGE_MODEL, inputs=0, generated=1)
+            _call(connection, alice, "img-outside-bands", model=IMAGE_MODEL, inputs=0, generated=1, sizes=["4000x2500"])
+            _import(connection, *lines, _line(
+                "wrong-unit", ConfigName=IMAGE_UPSTREAM, ElementCode="small", Unit="Token", Count="1",
+            ), replace=True)
+            incomplete = _report(connection, **options, dimension_map=dimensions)["usage"]
+            comparisons = {item["dimension"]: item for item in incomplete["generalModelComparisons"]}
+            assert comparisons["text_output_tokens"]["difference"] is None
+            assert comparisons["text_cached_input_tokens"]["unknownRelayUsageRequests"] == 1
+            assert comparisons["image_output_count_le_2_61m"]["difference"] is None
+            assert comparisons["image_output_count_4_63m_to_8_30m"]["unknownRelayUsageRequests"] == 2
+            assert comparisons["image_input_count"]["difference"] == 0
+            assert {(item["requestId"], item["reason"]) for item in incomplete["unmatchedRelayCalls"]} == {
+                ("chatcmpl-legacy", "missing_settlement_time"), ("chatcmpl-missing-cache", "missing_usage"),
+                ("img-no-sizes", "missing_usage"), ("img-outside-bands", "missing_usage"),
+            }
+            assert [(item["billDetailId"], item["reason"]) for item in incomplete["unmatchedProviderLines"]] == [
+                ("wrong-unit", "unsupported_usage_unit"),
+            ]
+
+
+def test_bill_attribution_requires_exact_evidence_for_the_active_revision(tmp_path: Path) -> None:
+    with _client(tmp_path / "bill-attribution.sqlite") as client:
+        alice, bob = _customer(client), _customer(client, "bob")
+        with client.app.state.db.connect() as connection:
+            _price_customer(connection, alice)
+            _task(connection, alice, "vid_new", tokens=45000)
+            _task(connection, alice, "vid_pending", tokens=None)
+            statements.confirm_statement(connection, alice.project_id, MONTH)
+            _call(connection, alice, "chatcmpl-a", provider_id="official-chat-a")
+            _call(connection, alice, "chatcmpl-b", provider_id="shared-id")
+            _call(connection, bob, "chatcmpl-c", provider_id="shared-id")
+            _call(connection, bob, "chatcmpl-prior", provider_id="prior-month", settled_at=START - 1)
+            _call(connection, bob, "img_b", model=IMAGE_MODEL)
+            lines = (
+                _line("video"), _line("unpriced-video"), _line("chat", ConfigName=TEXT_UPSTREAM),
+                _line("image", ConfigName=IMAGE_UPSTREAM),
+                _line("explicit-project"), _line("wrong-model"), _line("not-unique", ConfigName=TEXT_UPSTREAM),
+                _line("other-month", BusiPeriod="2025-01"), _line("wrong-time", ConfigName=TEXT_UPSTREAM),
+                _line("no-correlation", InstanceNo="provider-vid_new", ResourceID="official-chat-a"),
+            )
+            _import(connection, *lines)
+            before = _report(connection)
+            assert "attribution" not in before
+            mappings = {
+                "video": {"providerTaskId": "provider-vid_new"},
+                "unpriced-video": {"localRequestId": "vid_pending"},
+                "chat": {"providerRequestId": "official-chat-a"},
+                "image": {"localRequestId": "img_b"},
+                "explicit-project": {"projectId": bob.project_id},
+                "wrong-model": {"localRequestId": "img_b"},
+                "not-unique": {"providerRequestId": "shared-id"},
+                "other-month": {"projectId": alice.project_id},
+                "wrong-time": {"providerRequestId": "prior-month"},
+            }
+            loaded = {"scope": before["source"], "lines": mappings}
+            with pytest.raises(ValueError, match="explicit confirmation"):
+                _report(connection, correlation_map=loaded)
+            options = {"confirm_usage_scope": True}
+            with pytest.raises(ValueError, match="exactly match"):
+                _report(connection, **options, correlation_map={**loaded, "scope": {**before["source"], "ownerId": "0"}})
+            with pytest.raises(ValueError, match="outside the active import"):
+                _report(connection, **options, correlation_map={**loaded, "lines": {"wrong-id": mappings["video"]}})
+            with pytest.raises(ValueError, match="exactly one"):
+                _report(connection, **options, correlation_map={**loaded, "lines": {
+                    "video": {"providerTaskId": "provider-vid_new", "projectId": alice.project_id},
+                }})
+
+            report = _report(connection, **options, correlation_map=loaded)
+            assert report["provider"] == before["provider"] and report["customers"] == before["customers"]
+            attribution = report["attribution"]
+            assigned = {item["billDetailId"]: (item["projectId"], item["localRequestId"])
+                        for item in attribution["attributedProviderLines"]}
+            assert assigned == {
+                "video": (alice.project_id, "vid_new"), "chat": (alice.project_id, "chatcmpl-a"),
+                "image": (bob.project_id, "img_b"), "explicit-project": (bob.project_id, None),
+                "unpriced-video": (alice.project_id, "vid_pending"),
+            }
+            assert {item["billDetailId"]: item["reason"] for item in attribution["unmatchedProviderLines"]} == {
+                "wrong-model": "mapped_request_model_mismatch", "not-unique": "mapped_request_ambiguous",
+                "other-month": "different_business_period", "no-correlation": "no_verified_attribution",
+                "wrong-time": "mapped_request_not_found_in_scope",
+            }
+            by_project = {item["projectId"]: item for item in attribution["projects"]}
+            assert by_project[alice.project_id]["attributedProvider"]["payableAmount"] == "27.15"
+            assert by_project[alice.project_id]["customers"]["confirmedPayableAmount"] == "0.05"
+            assert attribution["unattributedProvider"]["lineCount"] == 5
+            by_request = {item["localRequestId"]: item for item in attribution["requests"]}
+            assert by_request["chatcmpl-a"]["modality"] == "text"
+            assert by_request["chatcmpl-a"]["customer"] == {"currency": "CNY", "status": "unbilled", "amount": None}
+            assert by_request["img_b"]["attributedProvider"]["lineCount"] == 1
+            assert by_request["vid_new"]["customer"] == {"currency": "CNY", "status": "priced", "amount": "0.045000"}
+            assert by_request["vid_pending"]["customer"] == {"currency": "CNY", "status": "pending", "amount": None}
+
+            _import(connection, *lines, _line("revision"), replace=True)
+            with pytest.raises(ValueError, match="exactly match"):
+                _report(connection, **options, correlation_map=loaded)
+
+
 def test_customer_receivables_are_independent_and_provider_costs_are_not_exposed(tmp_path: Path) -> None:
     with _client(tmp_path / "isolated.sqlite") as client:
         alice, bob = _customer(client), _customer(client, "bob")
@@ -377,3 +553,21 @@ def test_operator_import_and_report_cli_use_the_initialized_local_database(tmp_p
     assert replayed == {**loaded, "disposition": "unchanged"}
     assert costs["provider"]["payableAmount"] == "9.05" and costs["customers"]["confirmedPayableAmount"] == "0.00"
     assert costs["usage"]["scopeConfirmed"] is False
+
+    correlation = tmp_path / "correlation.json"
+    correlation.write_text(json.dumps({"scope": costs["source"], "lines": {}}), encoding="utf-8")
+    request = command("provider-cost-report", "--confirm-usage-scope", "--correlation-map", str(correlation))
+    assert request.returncode == 0, request.stderr
+    assert json.loads(request.stdout)["attribution"]["unattributedProvider"]["lineCount"] == 1
+    correlation.write_text('{"scope":{},"lines":{"same":{},"same":{}}}', encoding="utf-8")
+    duplicate = command("provider-cost-report", "--confirm-usage-scope", "--correlation-map", str(correlation))
+    assert duplicate.returncode == 1 and "without duplicate fields" in duplicate.stderr
+
+    evidence = tmp_path / "request-evidence.json"
+    evidence_scope = {field: costs["source"][field] for field in ("payerId", "ownerId", "product", "month")}
+    evidence.write_text(json.dumps({"scope": evidence_scope}), encoding="utf-8")
+    ignored = command("provider-cost-report", "--request-evidence", str(evidence))
+    assert ignored.returncode == 1 and "requires explicit confirmation" in ignored.stderr
+    scoped = command("provider-cost-report", "--confirm-usage-scope", "--request-evidence", str(evidence))
+    assert scoped.returncode == 0, scoped.stderr
+    assert json.loads(scoped.stdout)["requestUsage"]["matched"] == []

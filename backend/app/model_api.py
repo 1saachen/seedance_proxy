@@ -504,7 +504,9 @@ async def create_task(
     upstream_id = None
     status = "submission_unknown"
     try:
-        response = await request.app.state.ark.post(TASKS_PATH, json=clean, headers=headers)
+        response = await request.app.state.ark.post(
+            TASKS_PATH, json=clean, headers={**headers, "X-Client-Request-Id": task_id},
+        )
         if response.is_success:
             candidate = _response_object(response).get("id")
             if isinstance(candidate, str) and UPSTREAM_ID.fullmatch(candidate):

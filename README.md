@@ -265,6 +265,14 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 确认命令返回 `statementId`、`month`、`status` 和 `payableAmount`，客户可在工作台选择账期查看和下载。
 
+### 筛选与导出项目用量
+
+客户工作台在「用量与账单」中默认收起明细。展开「用量明细」，可按本项目业务 Key、模型和开始／结束日期筛选文本、图片及视频调用。日期按北京时间的调用创建日计算，包含首尾两日。历史用量仍可按已撤销的 Key 筛选。
+
+「导出筛选结果 CSV」导出全部符合条件的真实项目记录，包括实际用量、计价状态和已计价金额。本项目的已确认月账单仍可单独下载原始冻结明细。文本和图片尚未纳入客户计费，金额显示为空。体验账号的概览和账单预估可能读取演示数据，筛选用量和 CSV 始终使用项目真实记录。
+
+工作台会话使用 `GET /api/customer/usage/report` 查询，参数为 `keyId`、`model`、`from`、`to`、`page` 和 `pageSize`。`GET /api/customer/usage/report.csv` 使用相同筛选条件，导出全部结果。
+
 ## 火山账单导入与对账
 
 运营可离线导入火山费用中心 `ListBillDetail` 的计费项明细。准备样本时按 `PayerID`、`OwnerID`、`Product` 和 `BillPeriod` 选定范围，使用 `GroupTerm=0`、`GroupPeriod=2`、`NeedRecordNum=1`、`IgnoreZero=0`。文件为 UTF-8 编码的一页完整 JSON 响应，或包含全部响应页的 JSON 数组，每页保留 `ResponseMetadata.Action`、`Result.List` 和 `Result.Total`。 [火山账单明细接口](https://docs.volcengine.com/docs/billing-center/list-bill-detail-page-query-bill-details?lang=zh)
@@ -290,6 +298,18 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 核实供应商账单与本站成功任务的用量覆盖范围一致后，可在 `provider-cost-report` 加上 `--confirm-usage-scope` 做模型级 Token 核对。匹配要求供应商业务账期 `BusiPeriod` 与所选月份一致，明细为按量消费使用，`Unit` 为 `Token` 或 `Tokens`，`Count` 为非负整数。`ConfigName` 可直接匹配已知上游模型版本，也可通过 `--model-map` 提供 JSON 对象，键为账单配置名，值为已核实的上游模型版本。
 
 `usage` 返回模型用量比较和未匹配的供应商明细、本站任务及原因。只有覆盖范围明确、相关模型和用量完整时才计算 `tokenDifference`。费用中心分账可按方舟接入点或官方 API Key 资源 ID 查看聚合用量，本报告按模型核对，保留无法关联到单次视频任务的明细。 [方舟账单分账](https://docs.volcengine.com/docs/ark/practice-guidance-for-modelark-bill-split?lang=zh)
+
+### 文本、图片与请求级对账
+
+新版推理在成功时保留方舟实际返回的缓存命中 Token、输入图张数、输出图尺寸和本站确认成功的时间。新请求为方舟发送本站调用 ID 作为 `X-Client-Request-Id`。文本还保留方舟响应中的请求 ID。这些关联字段用于内部对账，供应商请求 ID 不写入客户下载。旧记录缺少的维度保持为空。 [方舟对话 API](https://docs.volcengine.com/docs/ark/chat-api?lang=zh) · [方舟图片 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)
+
+确认双方用量范围后，可为 `provider-cost-report --confirm-usage-scope` 指定以下 JSON 文件。
+
+- `--dimension-map` 提供按确切上游模型版本分组的映射。每组把已核实的火山 `ElementCode` 对应到本地计量维度，例如 `{"doubao-seed-2-1-lite-260915":{"经过核实的输出计费项":"text_output_tokens"}}`。文本区分普通输入、缓存输入和输出，图片支持输入张数、输出张数及官方输出像素档位。缺少可信计费项、单位或完整用量时，报告保留未匹配项。
+- `--correlation-map` 提供当前导入版本的账单明细关联证据。`scope` 包含 `importId`、`payerId`、`ownerId`、`product`、`month`。`lines` 以 `BillDetailId` 为键，每条提供已经核实的 `projectId`、`localRequestId`、`providerRequestId` 或 `providerTaskId` 之一。缺少证据的汇总金额保持未归属。
+- `--request-evidence` 核对单请求用量。`scope` 包含 `payerId`、`ownerId`、`product`、`month`。`usageResponses` 可包含完整的 `GetInferenceRequestUsage` 成功响应。`invocationLogs` 可包含方舟调用日志筛选后的 `request_id`、`X-Client-Request-Id`、`account_id`、`model_name` 和可选 `usage`，后者为对象，仅留 `prompt_tokens`、`completion_tokens`、`prompt_tokens_details.cached_tokens`、`input_images`、`generated_images`。报告按精确 ID 关联到本地请求和所属项目，列出用量差异与未匹配原因。 [单请求用量 API](https://docs.volcengine.com/docs/ark/get-inference-request-usage-api?lang=zh) · [方舟调用日志](https://docs.volcengine.com/docs/ark/log-collection?lang=zh)
+
+用量及证据文件通过运营命令离线读取。调用日志用于核对请求身份和用量，真实金额来自账单明细。共享接入点、资源 ID、模型和时间不能单独证明账单明细归属于某个客户或请求。证据文件只保留对账需要的字段，存放在仓库外的授权目录。
 
 ## 测试与当前边界
 

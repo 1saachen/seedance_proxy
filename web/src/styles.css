@@ -687,9 +687,131 @@ input {
 }
 .spend-legend li { display: flex; align-items: center; gap: 0.35rem; }
 .spend-legend span { inline-size: 0.57rem; block-size: 0.57rem; border-radius: 0.12rem; }
-.usage-day-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 0.88rem; }
-.usage-day-filter span { color: var(--muted); }
-.usage-day-filter time { color: var(--text); font-weight: 650; }
+.usage-disclosure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 1rem 1.2rem;
+  border: 0;
+  border-radius: 0.6rem;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  font-size: 1.15rem;
+  text-align: left;
+}
+
+.usage-disclosure:hover {
+  background: var(--fog);
+}
+
+.usage-disclosure > span:last-child {
+  color: var(--blue);
+  font-size: 0.9rem;
+}
+
+.usage-chevron {
+  display: inline-block;
+  margin-inline-start: 0.2rem;
+}
+
+.usage-disclosure[aria-expanded="true"] .usage-chevron {
+  transform: rotate(180deg);
+}
+
+.statement-disclosure {
+  border-top: 1px solid var(--line);
+}
+
+.statement-disclosure .usage-disclosure {
+  font-size: 1rem;
+}
+
+.usage-report-note {
+  margin: 0 1.2rem 0.7rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.usage-report-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(8rem, 0.8fr) minmax(8rem, 0.8fr);
+  gap: 0.7rem;
+  padding: 0 1.2rem 1rem;
+}
+
+.usage-report-filters label {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 650;
+}
+
+.usage-report-filters input,
+.usage-report-filters select {
+  min-width: 0;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #c4cde0;
+  border-radius: 0.4rem;
+  background: var(--paper);
+  color: var(--text);
+  font: inherit;
+}
+
+.usage-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  grid-column: 1 / -1;
+}
+
+.usage-report-metrics > div:nth-child(4) {
+  padding-left: 0;
+  border-left: 0;
+}
+
+.usage-report-table table {
+  min-width: 48rem;
+}
+
+.usage-report-table td small,
+.usage-report-table th small {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+@media (max-width: 67rem) {
+  .usage-report-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 32rem) {
+  .usage-report-metrics.metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.6rem 1rem;
+  }
+
+  .usage-report-metrics.metric-strip > div {
+    display: block;
+    padding: 0;
+    border: 0;
+  }
+}
+
+@media (max-width: 23rem) {
+  .usage-report-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 @media (max-width: 38rem) {
   .spend-chart { padding-inline: 0.72rem; }
   .spend-frame { grid-template-columns: minmax(0, 1fr); }

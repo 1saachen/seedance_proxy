@@ -44,6 +44,38 @@ test('usage requests opt into the overview trend and paginate details by the cli
   );
 });
 
+test('filtered usage and CSV use the same customer-scoped filters and only the report is paginated', async (t) => {
+  const fixture = new TextEncoder().encode('\uFEFFdate,model\n2026-11-01,doubao\n');
+  const fetch = t.mock.method(globalThis, 'fetch', async (path) => path.includes('.csv?')
+    ? new Response(fixture, { headers: { 'Content-Type': 'text/csv; charset=utf-8' } })
+    : json({ items: [] }),
+  );
+  const controller = new AbortController();
+  const filters = { keyId: 'key/name', model: 'doubao-test+', from: '2026-11-01', to: '2026-11-27' };
+
+  await customerApi.usageReport(filters, 2, controller.signal);
+  const downloaded = await customerApi.usageReportCsv(filters, controller.signal);
+  assert.deepEqual(new Uint8Array(await downloaded.arrayBuffer()), fixture);
+
+  const [[reportPath, read], [csvPath, exportOptions]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  const query = 'keyId=key%2Fname&model=doubao-test%2B&from=2026-11-01&to=2026-11-27';
+  assert.equal(reportPath, '/api/customer/usage/report?' + query + '&page=2&pageSize=50');
+  assert.equal(csvPath, '/api/customer/usage/report.csv?' + query);
+  assert.equal(read.headers.Accept, 'application/json');
+  assert.equal(exportOptions.headers.Accept, 'text/csv');
+  for (const options of [read, exportOptions]) {
+    assert.equal(options.credentials, 'same-origin');
+    assert.equal(options.cache, 'no-store');
+    assert.equal(options.signal, controller.signal);
+    assert.equal(options.headers.Authorization, undefined);
+  }
+});
+
+test('an expired usage report export returns 401 before downloading a response body', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => json({ detail: 'fixture' }, 401));
+  await assert.rejects(customerApi.usageReportCsv({}), (error) => error instanceof ApiError && error.status === 401);
+});
+
 test('monthly statements are paginated same-origin reads with a scoped CSV path', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => json({ status: 'estimate' }));
   const controller = new AbortController();

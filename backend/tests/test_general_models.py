@@ -67,14 +67,15 @@ def test_chat_uses_fixed_provider_path_and_counts_only_actual_tokens(tmp_path: P
         assert request.headers["authorization"] == "Bearer " + ARK_KEY
         assert "cookie" not in request.headers
         sent = json.loads(request.content)
-        calls.append(sent)
+        calls.append(request.headers["x-client-request-id"])
         assert sent["model"] == general_models.TEXT_MODELS[TEXT_MODEL]
         assert sent["messages"] == _chat()["messages"]
         return httpx.Response(200, json={
             "id": "ark-provider-private-id", "model": sent["model"], "private": ARK_KEY,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "A reply", "private": ARK_KEY},
                          "finish_reason": "stop"}],
-            "usage": {"prompt_tokens": 18, "completion_tokens": 9, "total_tokens": 27, "private": ARK_KEY},
+            "usage": {"prompt_tokens": 18, "completion_tokens": 9, "total_tokens": 27, "private": ARK_KEY,
+                      "prompt_tokens_details": {"cached_tokens": 5}},
         })
 
     with TestClient(_app(tmp_path / "models.sqlite", provider)) as client:
@@ -90,7 +91,7 @@ def test_chat_uses_fixed_provider_path_and_counts_only_actual_tokens(tmp_path: P
         assert client.post(CHAT_PATH, headers=headers, json=_chat(
             max_tokens=16, max_completion_tokens=32,
         )).status_code == 422
-        result = client.post(CHAT_PATH, headers=headers, json=_chat(max_tokens=16))
+        result = client.post(CHAT_PATH, headers={**headers, "X-Client-Request-Id": "caller-controlled"}, json=_chat(max_tokens=16))
         assert result.status_code == 200, result.text
         assert result.headers["cache-control"] == "no-store"
         assert result.json() == {
@@ -100,6 +101,7 @@ def test_chat_uses_fixed_provider_path_and_counts_only_actual_tokens(tmp_path: P
             "usage": {"prompt_tokens": 18, "completion_tokens": 9, "total_tokens": 27},
         }
         assert result.json()["id"].startswith("chatcmpl-") and len(calls) == 1
+        assert calls == [result.json()["id"]]
         usage = client.get(USAGE_PATH)
         assert usage.status_code == 200
         assert usage.json()["summary"] == {
@@ -109,6 +111,8 @@ def test_chat_uses_fixed_provider_path_and_counts_only_actual_tokens(tmp_path: P
         with client.app.state.db.connect() as connection:
             record = dict(connection.execute("SELECT * FROM general_model_calls").fetchone())
         assert record["upstream_model"] == general_models.TEXT_MODELS[TEXT_MODEL]
+        assert (record["provider_request_id"], record["cached_prompt_tokens"]) == ("ark-provider-private-id", 5)
+        assert record["settled_at"] >= record["created_at"]
         assert record["cached_result_json"] is None
         assert not any(secret in repr(record) for secret in (ARK_KEY, "local-only-prompt", "A reply"))
 
@@ -117,7 +121,8 @@ def test_streaming_delivers_chunks_and_records_opt_in_and_hidden_usage(tmp_path:
     calls = []
     complete = [
         {"model": "internal", "id": "internal", "choices": [{"delta": {"role": "assistant", "content": "你好"}}]},
-        {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7}},
+        {"choices": [], "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7,
+                                 "prompt_tokens_details": {"cached_tokens": 0}}},
     ]
 
     def provider(request):
@@ -153,6 +158,11 @@ def test_streaming_delivers_chunks_and_records_opt_in_and_hidden_usage(tmp_path:
         assert usage["summary"]["textCalls"] == 2
         assert usage["summary"]["completionTokens"] == 6
         assert sorted(item["status"] for item in usage["items"]) == ["succeeded", "succeeded", "uncertain"]
+        with client.app.state.db.connect() as connection:
+            rows = connection.execute("""
+                SELECT provider_request_id, cached_prompt_tokens, settled_at FROM general_model_calls WHERE status = 'succeeded'
+            """).fetchall()
+        assert len(rows) == 2 and all(tuple(row)[:2] == ("internal", 0) and row["settled_at"] for row in rows)
 
 
 def test_images_validate_reference_and_are_idempotent_within_key(tmp_path: Path):
@@ -161,12 +171,14 @@ def test_images_validate_reference_and_are_idempotent_within_key(tmp_path: Path)
     def provider(request):
         assert request.url == httpx.URL("https://ark.cn-beijing.volces.com/api/v3/images/generations")
         sent = json.loads(request.content)
-        calls.append(sent)
+        calls.append(request.headers["x-client-request-id"])
         assert sent["model"] == general_models.IMAGE_MODELS[IMAGE_MODEL]
         assert sent["size"] == "3840x2160"
         assert sent["response_format"] == "url"
         assert sent["image"] == ["https://example.com/reference.png"]
-        return httpx.Response(200, json=_image_result(len(calls)))
+        result = _image_result(len(calls))
+        result["usage"]["input_images"] = 1
+        return httpx.Response(200, json=result)
 
     image_request = {
         **IMAGE_REQUEST, "size": "3840x2160", "output_format": "png", "image": ["https://example.com/reference.png"],
@@ -188,6 +200,7 @@ def test_images_validate_reference_and_are_idempotent_within_key(tmp_path: Path)
         assert created.status_code == 200, created.text
         assert created.json()["model"] == IMAGE_MODEL
         assert created.json()["usage"]["generated_images"] == 1
+        assert calls == [created.json()["id"]]
         assert "ark-provider-private-id" not in created.text and ARK_KEY not in created.text
         assert client.post(IMAGE_PATH, headers=headers, json=image_request).json() == created.json()
         assert client.post(IMAGE_PATH, headers=headers, json={**image_request, "prompt": "different"}).status_code == 409
@@ -195,6 +208,12 @@ def test_images_validate_reference_and_are_idempotent_within_key(tmp_path: Path)
         owner_usage = client.get(USAGE_PATH).json()
         assert owner_usage["summary"]["generatedImages"] == 1
         assert owner_usage["items"][0]["generatedImages"] == 1
+        with client.app.state.db.connect() as connection:
+            captured = connection.execute("""
+                SELECT input_images, image_sizes_json, provider_request_id, settled_at FROM general_model_calls WHERE id = ?
+            """, (created.json()["id"],)).fetchone()
+        assert tuple(captured)[:3] == (1, '["2048x2048"]', None)
+        assert captured["settled_at"]
 
         auth, _ = _customer(client, "other")
         assert client.get(USAGE_PATH).json()["items"] == []
@@ -294,7 +313,7 @@ def test_stream_disconnect_closes_provider_and_releases_shared_slot(tmp_path: Pa
 
     class HeldStream(httpx.AsyncByteStream):
         async def __aiter__(self):
-            yield b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
+            yield b'data: {"id":"ark-aborted-call","choices":[{"delta":{"content":"Hi"}}]}\n\n'
             await asyncio.Future()
 
         async def aclose(self):
@@ -377,7 +396,8 @@ def test_stream_disconnect_closes_provider_and_releases_shared_slot(tmp_path: Pa
         with app.state.db.connect() as connection:
             metrics = key_limits.project_key_metrics(connection, project)[key_id]
             assert metrics["activeTextRequests"] == metrics["activeConcurrentRequests"] == 0
-            assert connection.execute("SELECT status FROM general_model_calls").fetchone()[0] == "uncertain"
+            captured = connection.execute("SELECT status, provider_request_id FROM general_model_calls").fetchone()
+            assert tuple(captured) == ("uncertain", None if disconnect == "before_headers" else "ark-aborted-call")
         assert client.post(IMAGE_PATH, headers=auth, json=IMAGE_REQUEST).status_code == 200
         assert calls == 2
 

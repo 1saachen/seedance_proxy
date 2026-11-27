@@ -28,37 +28,37 @@ const navigation = [
 ];
 const sections = navigation.flatMap(({ items }) => items);
 
-function formatBillingAmount(billing) {
-  if (billing?.amount != null) return billing.amount;
-  return billing?.status === 'pending' ? '待计价' : '未计费';
-}
-
-function currentMonth() {
+function currentDay() {
   const parts = new Intl.DateTimeFormat('en', {
     timeZone: 'Asia/Shanghai',
     year: 'numeric',
     month: '2-digit',
+    day: '2-digit',
   }).formatToParts();
-  const year = parts.find((part) => part.type === 'year').value;
-  const month = parts.find((part) => part.type === 'month').value;
-  return `${year}-${month}`;
+  return ['year', 'month', 'day'].map((name) => parts.find((part) => part.type === name).value).join('-');
+}
+
+function currentMonth() {
+  return currentDay().slice(0, 7);
 }
 
 function readRoute() {
   const [id, query] = window.location.hash.slice(1).split('?');
   const section = sections.find((item) => item.id === id) ?? sections[0];
-  const day = section.id === 'billing' ? new URLSearchParams(query).get('day') : null;
+  const params = new URLSearchParams(query);
+  const day = section.id === 'billing' ? params.get('day') : null;
   if (/^2\d{3}-\d{2}-\d{2}$/.test(day ?? '')) {
     const date = new Date(`${day}T00:00:00Z`);
-    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day) return { section, day };
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day) return { section, day, showUsage: true };
   }
-  return { section, day: null };
+  return { section, day: null, showUsage: section.id === 'billing' && params.get('usage') === '1' };
 }
 
-function useRemote(load, onExpired) {
+function useRemote(load, onExpired, enabled = true) {
   const [snapshot, setSnapshot] = useState(null);
   const [revision, setRevision] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     load(controller.signal).then(
       (data) => {
@@ -71,7 +71,7 @@ function useRemote(load, onExpired) {
       },
     );
     return () => controller.abort();
-  }, [load, onExpired, revision]);
+  }, [load, onExpired, revision, enabled]);
   const result = snapshot?.load === load && snapshot.revision === revision ? snapshot : {};
   return { ...result, refresh: () => setRevision((value) => value + 1) };
 }
@@ -126,7 +126,7 @@ function Overview({ customer, keys, month, onExpired }) {
             <h2 id="month-heading">本月用量</h2>
             <p><time dateTime={month}>{month}</time>（北京时间）</p>
           </div>
-          <a href="#billing">查看用量明细</a>
+          <a href="#billing?usage=1">查看用量明细</a>
         </div>
         <LoadState state={usage}>{({ summary }) => <UsageSummary summary={summary} />}</LoadState>
       </section>
@@ -158,7 +158,7 @@ function Overview({ customer, keys, month, onExpired }) {
             </li>
             <li>
               <div><h3>查询调用用量</h3><p>按月查看项目的调用记录和计量数据。</p></div>
-              <a className="button secondary" href="#billing">查看用量</a>
+              <a className="button secondary" href="#billing?usage=1">查看用量</a>
             </li>
           </ol>
         </section>
@@ -432,8 +432,19 @@ function SetupGuide() {
   );
 }
 
+function DetailToggle({ children, open, controls, buttonRef, onToggle }) {
+  return (
+    <button className="usage-disclosure" type="button" ref={buttonRef} aria-expanded={open}
+      aria-controls={controls} onClick={onToggle}>
+      <span>{children}</span>
+      <span aria-hidden="true">{open ? '收起' : '展开'} <span className="usage-chevron">⌄</span></span>
+    </button>
+  );
+}
+
 function MonthlyStatement({ month, current, onExpired }) {
   const [page, setPage] = useState(1);
+  const [open, setOpen] = useState(false);
   const summaryRef = useRef(null);
   const load = useCallback((signal) => customerApi.billing(month, page, signal), [month, page]);
   const statement = useRemote(load, onExpired);
@@ -484,55 +495,62 @@ function MonthlyStatement({ month, current, onExpired }) {
               <p className="statement-note">
                 {confirmed ? `${formatDate(confirmedAt)} 确认，金额已固定。` : '待计价任务补齐用量和价目后计入账单。'}
               </p>
-              {items.length === 0 ? (
-                <p className="empty">该账期暂无已计价明细。</p>
-              ) : (
-                <div className="table-scroll statement-details" tabIndex={0} role="region" aria-label="账单计价明细">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th scope="col">任务 ID / 模型</th>
-                        <th scope="col">折后（元）</th>
-                        <th scope="col">来源账期 / 结束时间</th>
-                        <th scope="col">输出 Token</th>
-                        <th scope="col">单价（元／百万 Token）</th>
-                        <th scope="col">折前（元）</th>
-                        <th scope="col">应付比例</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item) => (
-                        <tr key={item.taskId}>
-                          <th scope="row">
-                            <code>{item.taskId}</code>
-                            <small className="statement-line-note">{item.model}</small>
-                          </th>
-                          <td>{item.amount ?? '—'}</td>
-                          <td>
-                            {item.sourceMonth}{item.kind === 'late_usage' && ' · 补计'}
-                            <small className="statement-line-note">{formatDate(item.settledAt)}</small>
-                          </td>
-                          <td>{formatNumber(item.outputTokens)}</td>
-                          <td>{item.unitPrice ?? '—'}</td>
-                          <td>{item.listAmount ?? '—'}</td>
-                          <td>{item.payableBps == null ? '—' : `${item.payableBps / 100}%`}</td>
+              <h3 className="statement-disclosure">
+                <DetailToggle open={open} controls="statement-details-content" onToggle={() => setOpen((value) => !value)}>
+                  账单计价明细
+                </DetailToggle>
+              </h3>
+              <div id="statement-details-content" hidden={!open}>
+                {items.length === 0 ? (
+                  <p className="empty">该账期暂无已计价明细。</p>
+                ) : (
+                  <div className="table-scroll statement-details" tabIndex={0} role="region" aria-label="账单计价明细">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th scope="col">任务 ID / 模型</th>
+                          <th scope="col">折后（元）</th>
+                          <th scope="col">来源账期 / 结束时间</th>
+                          <th scope="col">输出 Token</th>
+                          <th scope="col">单价（元／百万 Token）</th>
+                          <th scope="col">折前（元）</th>
+                          <th scope="col">应付比例</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              {(page > 1 || lastPage > 1) && (
-                <nav className="statement-pages" aria-label="账单明细分页">
-                  <button type="button" className="button secondary" disabled={page <= 1} onClick={() => goToPage(Math.min(page - 1, lastPage))}>
-                    上一页
-                  </button>
-                  <span role="status">第 {pagination.page} 页 / 共 {lastPage} 页</span>
-                  <button type="button" className="button secondary" disabled={page >= lastPage} onClick={() => goToPage(page + 1)}>
-                    下一页
-                  </button>
-                </nav>
-              )}
+                      </thead>
+                      <tbody>
+                        {items.map((item) => (
+                          <tr key={item.taskId}>
+                            <th scope="row">
+                              <code>{item.taskId}</code>
+                              <small className="statement-line-note">{item.model}</small>
+                            </th>
+                            <td>{item.amount ?? '—'}</td>
+                            <td>
+                              {item.sourceMonth}{item.kind === 'late_usage' && ' · 补计'}
+                              <small className="statement-line-note">{formatDate(item.settledAt)}</small>
+                            </td>
+                            <td>{formatNumber(item.outputTokens)}</td>
+                            <td>{item.unitPrice ?? '—'}</td>
+                            <td>{item.listAmount ?? '—'}</td>
+                            <td>{item.payableBps == null ? '—' : `${item.payableBps / 100}%`}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {(page > 1 || lastPage > 1) && (
+                  <nav className="statement-pages" aria-label="账单明细分页">
+                    <button type="button" className="button secondary" disabled={page <= 1} onClick={() => goToPage(Math.min(page - 1, lastPage))}>
+                      上一页
+                    </button>
+                    <span role="status">第 {pagination.page} 页 / 共 {lastPage} 页</span>
+                    <button type="button" className="button secondary" disabled={page >= lastPage} onClick={() => goToPage(page + 1)}>
+                      下一页
+                    </button>
+                  </nav>
+                )}
+              </div>
             </>
           );
         }}
@@ -541,172 +559,214 @@ function MonthlyStatement({ month, current, onExpired }) {
   );
 }
 
-function UsageRows({ month, day, onExpired, title }) {
-  const [page, setPage] = useState(1);
-  const load = useCallback(
-    (signal) => customerApi.usage(month, signal, { day, page, pageSize: 50 }),
-    [month, day, page],
-  );
-  const usage = useRemote(load, onExpired);
+const reportKinds = { video: '视频', text: '文本', image: '图片' };
 
-  function goToPage(next) {
-    setPage(next);
-    title.current?.focus();
+function reportDates(month, day) {
+  if (day) return { from: day, to: day };
+  const today = currentDay();
+  const [year, number] = month.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10);
+  return { from: month + '-01', to: month === today.slice(0, 7) ? today : lastDay };
+}
+
+function reportAmount(amount, status) {
+  if (amount != null) return '¥' + amount;
+  if (status === 'pending') return '待计价';
+  return status === 'unbilled' ? '未计费' : '—';
+}
+
+function UsageReportResults({ data, onPage }) {
+  const { summary, items, total, page, pageSize } = data;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  const totals = [
+    ['调用次数', formatNumber(summary.calls)],
+    ['成功调用', formatNumber(summary.successful)],
+    ['输入 Token', formatNumber(summary.promptTokens)],
+    ['输出 Token', formatNumber(summary.outputTokens)],
+    ['生成图片', formatNumber(summary.generatedImages)],
+    ['折后金额', reportAmount(summary.amount)],
+  ];
+  return (
+    <>
+      <dl className="metric-strip usage-report-metrics">
+        {totals.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+      </dl>
+      {summary.pendingCalls > 0 && (
+        <p className="usage-report-note">其中 {formatNumber(summary.pendingCalls)} 笔待计价。</p>
+      )}
+      {items.length ? (
+        <div className="table-scroll usage-report-table" tabIndex={0} role="region" aria-label="用量明细表">
+          <table>
+            <thead>
+              <tr>
+                {['模型 / 调用 ID', '业务 Key', '状态', '输入 Token', '输出 Token', '生成图片', '折后金额', '创建时间']
+                  .map((heading) => <th scope="col" key={heading}>{heading}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.kind + ':' + item.id}>
+                  <th scope="row">
+                    {item.model}
+                    <small>{reportKinds[item.kind]} · <code>{item.id}</code></small>
+                  </th>
+                  <td>
+                    {item.keyName ?? '—'}
+                    <small><code>{item.keyPrefix}</code>{item.keyStatus === 'revoked' && ' · 已撤销'}</small>
+                  </td>
+                  <td><Status value={item.status} /></td>
+                  <td>{formatNumber(item.promptTokens)}</td>
+                  <td>{formatNumber(item.outputTokens)}</td>
+                  <td>{formatNumber(item.generatedImages)}</td>
+                  <td>{reportAmount(item.amount, item.billingStatus)}</td>
+                  <td>
+                    {formatDate(item.createdAt)}
+                    {item.settledAt && <small>结束 {formatDate(item.settledAt)}</small>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="empty">所选范围暂无调用记录。</p>}
+      {(page > 1 || lastPage > 1) && (
+        <nav className="statement-pages" aria-label="用量明细分页">
+          <button type="button" className="button secondary" disabled={page <= 1}
+            onClick={() => onPage(Math.min(page - 1, lastPage))}>上一页</button>
+          <span role="status">第 {page} 页 / 共 {lastPage} 页</span>
+          <button type="button" className="button secondary" disabled={page >= lastPage}
+            onClick={() => onPage(page + 1)}>下一页</button>
+        </nav>
+      )}
+    </>
+  );
+}
+
+function UsageReport({ month, day, open, onClearDay, onExpired, title }) {
+  const [draft, setDraft] = useState(() => ({ keyId: '', model: '', ...reportDates(month, day) }));
+  const [applied, setApplied] = useState(draft);
+  const [page, setPage] = useState(1);
+  const [choices, setChoices] = useState(null);
+  const [exportError, setExportError] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const exportRequest = useRef(null);
+  const load = useCallback((signal) => customerApi.usageReport(applied, page, signal), [applied, page]);
+  const usage = useRemote(load, onExpired, open);
+  const dirty = Object.keys(applied).some((field) => applied[field] !== draft[field]);
+
+  useEffect(() => {
+    if (usage.data) setChoices({ keys: usage.data.keys, models: usage.data.models });
+  }, [usage.data]);
+  useEffect(() => () => exportRequest.current?.abort(), []);
+
+  function change(field, value) {
+    setDraft((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function filter(event) {
+    event.preventDefault();
+    setExportError('');
+    if (dirty) setApplied(draft);
+    setPage(1);
+  }
+
+  async function download() {
+    if (exportRequest.current) return;
+    const controller = new AbortController();
+    exportRequest.current = controller;
+    setExporting(true);
+    setExportError('');
+    try {
+      const csv = await customerApi.usageReportCsv(applied, controller.signal);
+      if (controller.signal.aborted) return;
+      const url = URL.createObjectURL(csv);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'rich-relay-usage-' + applied.from + '_' + applied.to + '.csv';
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (error.status === 401) onExpired(true);
+      else setExportError(requestErrorMessage(error));
+    } finally {
+      if (!controller.signal.aborted) {
+        exportRequest.current = null;
+        setExporting(false);
+      }
+    }
   }
 
   return (
-    <LoadState state={usage}>
-      {({ summary, items, page: responsePage, pageSize }) => {
-        const lastPage = Math.max(1, Math.ceil(summary.calls / pageSize));
-        return (
-          <>
-            <UsageSummary summary={summary} />
-            {items.length === 0 ? (
-              <p className="empty">{day ? '当天没有调用记录。' : '这个月还没有调用记录。'}</p>
-            ) : (
-              <div className="table-scroll" tabIndex={0} role="region" aria-label="用量明细表">
-                <table>
-                  <thead>
-                    <tr>
-                      <th scope="col">任务 ID</th>
-                      <th scope="col">模型</th>
-                      <th scope="col">状态</th>
-                      <th scope="col">输出 Token</th>
-                      <th scope="col">折后金额（元）</th>
-                      <th scope="col">创建时间</th>
-                      <th scope="col">任务结束时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item) => (
-                      <tr key={item.id}>
-                        <th scope="row">
-                          <code>{item.id}</code>
-                        </th>
-                        <td>{item.model}</td>
-                        <td>
-                          <Status value={item.status} />
-                        </td>
-                        <td>{formatNumber(item.outputTokens)}</td>
-                        <td>{formatBillingAmount(item.billing)}</td>
-                        <td>{formatDate(item.createdAt)}</td>
-                        <td>{formatDate(item.settledAt)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {(page > 1 || lastPage > 1) && (
-              <nav className="statement-pages" aria-label="用量明细分页">
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={page <= 1}
-                  onClick={() => goToPage(page - 1)}
-                >
-                  上一页
-                </button>
-                <span role="status">
-                  第 {responsePage} 页 / 共 {lastPage} 页
-                </span>
-                <button
-                  type="button"
-                  className="button secondary"
-                  disabled={page >= lastPage}
-                  onClick={() => goToPage(page + 1)}
-                >
-                  下一页
-                </button>
-              </nav>
-            )}
-          </>
-        );
-      }}
-    </LoadState>
+    <>
+      <form className="usage-report-filters" onSubmit={filter}>
+        <label>业务 Key
+          <select value={draft.keyId} disabled={!choices} onChange={(event) => change('keyId', event.target.value)}>
+            <option value="">全部 Key</option>
+            {choices?.keys.map((key) => (
+              <option key={key.id} value={key.id}>{key.name} · {key.prefix}{key.status === 'revoked' ? '（已撤销）' : ''}</option>
+            ))}
+          </select>
+        </label>
+        <label>模型
+          <select value={draft.model} disabled={!choices} onChange={(event) => change('model', event.target.value)}>
+            <option value="">全部模型</option>
+            {choices?.models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
+          </select>
+        </label>
+        <label>开始日期
+          <input type="date" value={draft.from} min="2000-01-01" max={draft.to} required
+            onChange={(event) => change('from', event.target.value)} />
+        </label>
+        <label>结束日期
+          <input type="date" value={draft.to} min={draft.from} max={currentDay()} required
+            onChange={(event) => change('to', event.target.value)} />
+        </label>
+        <div className="usage-report-actions">
+          <button className="button primary" type="submit">筛选</button>
+          {day && <button className="button secondary" type="button" onClick={onClearDay}>清除日期</button>}
+          <button className="button secondary" type="button" onClick={download} disabled={dirty || !usage.data || exporting}>
+            {exporting ? '正在导出…' : '导出筛选结果 CSV'}
+          </button>
+        </div>
+      </form>
+      {exportError && <p className="message error panel-message" role="alert">{exportError}</p>}
+      <LoadState state={usage}>{(data) => <UsageReportResults data={data} onPage={(next) => {
+        setPage(next);
+        title.current?.focus();
+      }} />}</LoadState>
+    </>
   );
 }
 
-function UsageDetails({ month, day, onClearDay, onExpired }) {
+function UsageDetails({ month, day, showUsage, onClearDay, onExpired }) {
+  const [open, setOpen] = useState(showUsage);
   const title = useRef(null);
   useEffect(() => {
-    if (day) title.current?.focus();
-  }, [day]);
+    if (showUsage) {
+      setOpen(true);
+      title.current?.focus();
+    }
+  }, [day, showUsage]);
+
   return (
-    <section className="panel" aria-labelledby="usage-heading">
-      <div className="panel-head">
-        <div>
-          <h2 id="usage-heading" tabIndex={-1} ref={title}>
-            用量明细
-          </h2>
-          <p>按北京时间的任务创建时间归集。缺少供应商用量的记录显示为「—」。</p>
-        </div>
-        {day && (
-          <div className="usage-day-filter">
-            <span>
-              创建日期 <time dateTime={day}>{day}</time>
-            </span>
-            <button type="button" className="button secondary" onClick={onClearDay}>
-              清除日期
-            </button>
-          </div>
-        )}
+    <section className="panel usage-report" aria-labelledby="usage-heading">
+      <h2 id="usage-heading">
+        <DetailToggle open={open} controls="usage-report-content" buttonRef={title}
+          onToggle={() => setOpen((expanded) => !expanded)}>用量明细</DetailToggle>
+      </h2>
+      <div id="usage-report-content" hidden={!open}>
+        <p className="usage-report-note">按北京时间的创建日期筛选项目真实调用，包含首尾日期。缺少计量的字段显示为「—」。</p>
+        <UsageReport key={day ?? month} month={month} day={day} open={open} onClearDay={onClearDay}
+          onExpired={onExpired} title={title} />
       </div>
-      <UsageRows key={day ?? month} month={month} day={day} onExpired={onExpired} title={title} />
     </section>
   );
 }
 
-const modelCallStatus = {
-  in_progress: '进行中',
-  succeeded: '已完成',
-  failed: '失败',
-  uncertain: '待确认',
-};
-
-function ModelUsage({ month, onExpired }) {
-  const load = useCallback((signal) => customerApi.modelUsage(month, signal), [month]);
-  const usage = useRemote(load, onExpired);
-  return (
-    <section className="panel" aria-labelledby="model-usage-heading">
-      <div className="panel-head">
-        <div><h2 id="model-usage-heading">文本与图片用量 · {month}</h2><p>查看成功调用汇总和最近 100 条请求记录。</p></div>
-      </div>
-      <LoadState state={usage}>
-        {({ summary, items }) => (
-          <>
-            <dl className="metric-strip model-usage-metrics">
-              <div><dt>成功文本调用</dt><dd>{formatNumber(summary.textCalls)}</dd></div>
-              <div><dt>成功图片调用</dt><dd>{formatNumber(summary.imageCalls)}</dd></div>
-              <div><dt>输入 Token</dt><dd>{formatNumber(summary.promptTokens)}</dd></div>
-              <div><dt>输出 Token</dt><dd>{formatNumber(summary.completionTokens)}</dd></div>
-              <div><dt>生成图片</dt><dd>{formatNumber(summary.generatedImages)}</dd></div>
-            </dl>
-            {items.length ? (
-              <div className="table-scroll" tabIndex={0} role="region" aria-label="文本与图片用量明细">
-                <table>
-                  <thead><tr><th scope="col">模型</th><th scope="col">状态</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">图片</th><th scope="col">时间</th></tr></thead>
-                  <tbody>{items.map((item) => (
-                    <tr key={item.id}>
-                      <th scope="row"><code>{item.model}</code></th>
-                      <td>{modelCallStatus[item.status] ?? '—'}</td>
-                      <td>{formatNumber(item.promptTokens)}</td>
-                      <td>{formatNumber(item.completionTokens)}</td>
-                      <td>{formatNumber(item.generatedImages)}</td>
-                      <td>{formatDate(item.createdAt)}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            ) : <p className="empty">这个月还没有文本或图片调用。</p>}
-          </>
-        )}
-      </LoadState>
-    </section>
-  );
-}
-
-function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
+function Billing({ month, setMonth, maxMonth, day, showUsage, onClearDay, onExpired }) {
   const statement = (
     <section className="panel" aria-labelledby="billing-heading" key="statement">
       <div className="panel-head">
@@ -735,12 +795,12 @@ function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
       key="usage"
       month={day?.slice(0, 7) ?? month}
       day={day}
+      showUsage={showUsage}
       onClearDay={onClearDay}
       onExpired={onExpired}
     />
   );
-  const modelUsage = <ModelUsage month={month} onExpired={onExpired} key="models" />;
-  return day ? [usage, statement, modelUsage] : [statement, modelUsage, usage];
+  return showUsage ? [usage, statement] : [statement, usage];
 }
 
 export function Workspace({ session, onSessionEnded }) {
@@ -752,7 +812,7 @@ export function Workspace({ session, onSessionEnded }) {
   const maxMonth = currentMonth();
   const keys = useRemote(customerApi.keys, onSessionEnded);
   const seedanceEnabled = session.capabilities?.seedance === true;
-  const { section, day } = route.section.seedanceOnly && !seedanceEnabled ? { section: sections[0], day: null } : route;
+  const { section, day, showUsage } = route.section.seedanceOnly && !seedanceEnabled ? { section: sections[0], day: null } : route;
 
   useEffect(() => {
     const onHashChange = () => setRoute(readRoute());
@@ -766,7 +826,7 @@ export function Workspace({ session, onSessionEnded }) {
 
   function clearBillingDay() {
     if (!day) return;
-    window.history.replaceState(window.history.state, '', '#billing');
+    window.history.replaceState(window.history.state, '', '#billing?usage=1');
     setRoute(readRoute());
   }
 
@@ -867,7 +927,8 @@ export function Workspace({ session, onSessionEnded }) {
           </Suspense>
         )}
         {section.id === 'billing' && (
-          <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} onClearDay={clearBillingDay} onExpired={onSessionEnded} />
+          <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} showUsage={showUsage}
+            onClearDay={clearBillingDay} onExpired={onSessionEnded} />
         )}
       </main>
     </div>

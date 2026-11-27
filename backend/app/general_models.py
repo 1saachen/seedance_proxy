@@ -128,6 +128,25 @@ def initialize(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS general_model_calls_cached_results
             ON general_model_calls(cached_result_expires_at) WHERE cached_result_json IS NOT NULL;
     """)
+    connection.execute("BEGIN IMMEDIATE")
+    columns = {column[1] for column in connection.execute("PRAGMA table_info(general_model_calls)")}
+    for name, definition in (
+        ("provider_request_id", "TEXT"),
+        ("cached_prompt_tokens", "INTEGER CHECK (cached_prompt_tokens >= 0)"),
+        ("input_images", "INTEGER CHECK (input_images >= 0)"),
+        ("image_sizes_json", "TEXT"),
+        ("settled_at", "INTEGER CHECK (settled_at >= 0)"),
+    ):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE general_model_calls ADD COLUMN {name} {definition}")
+    connection.execute("""
+        CREATE INDEX IF NOT EXISTS general_model_calls_provider_request
+        ON general_model_calls(provider_request_id) WHERE provider_request_id IS NOT NULL
+    """)
+    connection.execute("""
+        CREATE INDEX IF NOT EXISTS general_model_calls_settled
+        ON general_model_calls(settled_at) WHERE status = 'succeeded'
+    """)
 
 
 class ModelInput(BaseModel):
@@ -213,6 +232,8 @@ class ModelUsage:
     completion_tokens: int | None = None
     total_tokens: int | None = None
     generated_images: int | None = None
+    cached_prompt_tokens: int | None = None
+    input_images: int | None = None
 
 
 def _known_counts(value: object, names: tuple[str, ...]) -> dict[str, int]:
@@ -225,7 +246,22 @@ def _known_counts(value: object, names: tuple[str, ...]) -> dict[str, int]:
 
 
 def _usage_fields(value: dict) -> ModelUsage:
-    return ModelUsage(*(value.get(name) for name in ("prompt_tokens", "completion_tokens", "total_tokens", "generated_images")))
+    return ModelUsage(*(value.get(name) for name in (
+        "prompt_tokens", "completion_tokens", "total_tokens", "generated_images", "cached_prompt_tokens", "input_images",
+    )))
+
+
+def _cache_usage(raw: dict, reported: dict) -> int | None:
+    usage = raw.get("usage")
+    details = usage.get("prompt_tokens_details") if isinstance(usage, dict) else None
+    cached = _known_counts(details, ("cached_tokens",)).get("cached_tokens")
+    prompt = reported.get("prompt_tokens")
+    return cached if cached is not None and (prompt is None or cached <= prompt) else None
+
+
+def _provider_request_id(raw: dict) -> str | None:
+    value = raw.get("id")
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,160}", value) else None
 
 
 def _digest(value: str) -> str:
@@ -277,27 +313,33 @@ def _finish(
     database: Database, request_id: str, *, status: Literal["succeeded", "failed", "uncertain"],
     usage: ModelUsage = ModelUsage(), cache: dict | None = None, cache_created_at: int | None = None,
     error: HTTPException | None = None,
+    provider_request_id: str | None = None, image_sizes: tuple[str, ...] | None = None,
 ) -> None:
     with database.connect() as connection:
         connection.execute("""
             UPDATE general_model_calls SET status = ?, error_status = ?, error_code = ?, error_message = ?,
                 prompt_tokens = ?, completion_tokens = ?, total_tokens = ?, generated_images = ?,
-                cached_result_json = ?, cached_result_expires_at = ?
+                cached_result_json = ?, cached_result_expires_at = ?,
+                provider_request_id = ?, cached_prompt_tokens = ?, input_images = ?, image_sizes_json = ?, settled_at = ?
             WHERE id = ? AND status IN ('in_progress', 'uncertain')
         """, (
             status, error.status_code if error else None, error.detail["code"] if error else None,
             error.detail["message"] if error else None, usage.prompt_tokens, usage.completion_tokens,
             usage.total_tokens, usage.generated_images,
             json.dumps(cache, separators=(",", ":")) if cache is not None else None,
-            cache_created_at + IMAGE_RESULT_TTL if cache_created_at is not None else None, request_id,
+            cache_created_at + IMAGE_RESULT_TTL if cache_created_at is not None else None,
+            provider_request_id, usage.cached_prompt_tokens, usage.input_images,
+            json.dumps(image_sizes, separators=(",", ":")) if image_sizes is not None else None,
+            int(time.time()) if status == "succeeded" else None, request_id,
         ))
 
 
-def _mark_abandoned(database: Database, request_id: str) -> None:
+def _mark_abandoned(database: Database, request_id: str, provider_request_id: str | None) -> None:
     with database.connect() as connection:
         connection.execute(
-            "UPDATE general_model_calls SET status = 'uncertain' WHERE id = ? AND status = 'in_progress'",
-            (request_id,),
+            "UPDATE general_model_calls SET status = 'uncertain', provider_request_id = ? "
+            "WHERE id = ? AND status = 'in_progress'",
+            (provider_request_id, request_id),
         )
 
 
@@ -308,13 +350,14 @@ async def _close_upstream(upstream: httpx.Response) -> None:
 
 async def _release_abandoned(
     database: Database, request_id: str, upstream: httpx.Response | None = None,
+    *, provider_request_id: str | None = None,
 ) -> None:
     with CancelScope(shield=True):
         try:
             if upstream is not None:
                 await upstream.aclose()
         finally:
-            await run_in_threadpool(_mark_abandoned, database, request_id)
+            await run_in_threadpool(_mark_abandoned, database, request_id, provider_request_id)
 
 
 @asynccontextmanager
@@ -363,7 +406,10 @@ async def _upstream(
     client = request.app.state.ark
     try:
         async with asyncio.timeout_at(deadline):
-            outbound = client.build_request("POST", path, json=payload, headers=headers, timeout=UPSTREAM_TIMEOUT)
+            outbound = client.build_request(
+                "POST", path, json=payload, headers={**headers, "X-Client-Request-Id": request_id},
+                timeout=UPSTREAM_TIMEOUT,
+            )
             response = await client.send(outbound, stream=True)
     except (TimeoutError, httpx.RequestError):
         error = _invalid_provider_response()
@@ -491,10 +537,14 @@ class _TrackedChatResponse(StreamingResponse):
         self._database = database
         self._request_id = envelope["id"]
         self._settled = False
+        self._upstream_ids: set[str] = set()
         self._chunks = self._stream(envelope, include_usage, deadline)
         super().__init__(
             self._chunks, media_type="text/event-stream", headers={**PRIVATE_HEADERS, "X-Accel-Buffering": "no"},
         )
+
+    def _known_provider_id(self) -> str | None:
+        return next(iter(self._upstream_ids)) if len(self._upstream_ids) == 1 else None
 
     async def _stream(
         self, envelope: dict, include_usage: bool, deadline: float,
@@ -515,6 +565,7 @@ class _TrackedChatResponse(StreamingResponse):
                             raise ValueError("A completed chat stream needs a choice")
                         await run_in_threadpool(
                             _finish, database, request_id, status="succeeded", usage=_usage_fields(usage),
+                            provider_request_id=self._known_provider_id(),
                         )
                         self._settled = True
                         yield b"data: [DONE]\n\n"
@@ -522,9 +573,15 @@ class _TrackedChatResponse(StreamingResponse):
                     raw = json.loads(data)
                     if not isinstance(raw, dict):
                         raise ValueError("Invalid stream object")
+                    upstream_id = _provider_request_id(raw)
+                    if upstream_id is not None and len(self._upstream_ids) < 2:
+                        self._upstream_ids.add(upstream_id)
                     chunk, reported = _chat_response(raw, envelope, stream=True)
                     if reported:
                         usage.update(reported)
+                        cached = _cache_usage(raw, usage)
+                        if cached is not None:
+                            usage["cached_prompt_tokens"] = cached
                     if chunk["choices"]:
                         saw_choice = True
                     elif not (include_usage and reported):
@@ -534,7 +591,7 @@ class _TrackedChatResponse(StreamingResponse):
                     yield b"data: " + json.dumps(chunk, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n\n"
             raise ValueError("Provider closed chat before its terminal event")
         except (TimeoutError, ValueError, httpx.RequestError):
-            await _release_abandoned(database, request_id, upstream)
+            await _release_abandoned(database, request_id, upstream, provider_request_id=self._known_provider_id())
             self._settled = True
             yield b'data: {"error":{"code":"model_result_unknown","message":"The provider did not finish the chat"}}\n\n'
             yield b"data: [DONE]\n\n"
@@ -559,7 +616,9 @@ class _TrackedChatResponse(StreamingResponse):
                     if self._settled:
                         await self._upstream.aclose()
                     else:
-                        await _release_abandoned(self._database, self._request_id, self._upstream)
+                        await _release_abandoned(
+                            self._database, self._request_id, self._upstream, provider_request_id=self._known_provider_id(),
+                        )
 
 
 @router.post("/v1/chat/completions", tags=["Text models"], responses=LIMIT_RESPONSES)
@@ -597,7 +656,11 @@ async def chat_completions(payload: ChatRequest, request: Request, principal: Pr
             error = _invalid_provider_response()
             await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
             raise error from None
-        await run_in_threadpool(_finish, database, request_id, status="succeeded", usage=_usage_fields(reported))
+        await run_in_threadpool(
+            _finish, database, request_id, status="succeeded",
+            usage=_usage_fields({**reported, "cached_prompt_tokens": _cache_usage(raw, reported)}),
+            provider_request_id=_provider_request_id(raw),
+        )
         return JSONResponse(body, headers=PRIVATE_HEADERS)
 
 
@@ -653,9 +716,12 @@ async def generate_image(
             await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
             raise error from None
         retain_result = idempotency_key is not None
+        sizes = tuple(item["size"] for item in body["data"] if "size" in item)
+        image_sizes = sizes if len(sizes) == len(body["data"]) and reported.get("generated_images", len(sizes)) == len(sizes) else None
         await run_in_threadpool(
             _finish, database, request_id, status="succeeded", usage=_usage_fields(reported),
             cache=body if retain_result else None, cache_created_at=created if retain_result else None,
+            image_sizes=image_sizes,
         )
         return JSONResponse(body, headers=PRIVATE_HEADERS)
 

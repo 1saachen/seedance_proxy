@@ -38,11 +38,6 @@
 .model-image img { display: block; width: 100%; height: auto; border-radius: 0.5rem; }
 .model-image figcaption { margin-top: 0.55rem; }
 
-@media (min-width: 48.01rem) {
-  .model-usage-metrics.metric-strip { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .model-usage-metrics > div { padding-inline: 0.65rem; }
-}
-
 @media (max-width: 48rem) {
   .model-playground { grid-template-columns: minmax(0, 1fr); }
 }

@@ -57,6 +57,7 @@ def _no_upstream(request):
 
 def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
     calls = []
+    provider_client_ids = []
     started = int(datetime.now(timezone.utc).timestamp())
 
     def upstream(request):
@@ -69,6 +70,7 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
             assert payload["model"] == "doubao-seedance-2-5-260628"
             assert payload["content"][1]["role"] == "reference_video"
             assert "Idempotency-Key" not in request.headers
+            provider_client_ids.append(request.headers["X-Client-Request-Id"])
             return httpx.Response(200, json={"id": "provider-task-01"})
         assert request.url.path == TASKS_PATH + "/provider-task-01"
         return httpx.Response(200, json={
@@ -95,11 +97,12 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
         body = {**PROMPT, "resolution": "720p", "content": [
             *PROMPT["content"], {"type": "video_url", "video_url": {"url": "https://media.example.com/sample.mp4"}},
         ]}
-        headers = {**owner, "Idempotency-Key": "sample-01"}
+        headers = {**owner, "Idempotency-Key": "sample-01", "X-Client-Request-Id": "caller-controlled"}
         created = client.post(TASKS_PATH, headers=headers, json=body)
         assert created.status_code == 200
         task_id = created.json()["id"]
         assert task_id.startswith("vid_")
+        assert provider_client_ids == [task_id]
         assert client.post(TASKS_PATH, headers=headers, json=body).json() == {"id": task_id}
         assert client.post(TASKS_PATH, headers=headers, json={**body, "duration": 6}).status_code == 409
         other_project = _key(client, _register(client, "bob"))

@@ -111,6 +111,19 @@ def _reject_nonfinite(_: str) -> None:
     raise ValueError("invalid JSON number")
 
 
+def parse_operator_json(text: str) -> dict:
+    """Load a local reconciliation input without ambiguous or non-standard JSON fields."""
+    try:
+        data = json.loads(
+            text, object_pairs_hook=_unique_json_object, parse_float=Decimal, parse_constant=_reject_nonfinite,
+        )
+    except (ValueError, InvalidOperation, RecursionError):
+        raise ValueError("operator input must be valid JSON without duplicate fields") from None
+    if not isinstance(data, dict):
+        raise ValueError("operator input must be a JSON object")
+    return data
+
+
 def _identifier(value: object, field: str, *, allow_integer: bool = False) -> str:
     if allow_integer and type(value) is int:
         value = str(value)

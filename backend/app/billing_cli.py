@@ -62,6 +62,9 @@ def _parser() -> argparse.ArgumentParser:
     report = actions.add_parser("provider-cost-report", help="report supplier costs and customer due separately")
     report.add_argument("--confirm-usage-scope", action="store_true", help="confirm supplier and relay usage cover the same calls")
     report.add_argument("--model-map", type=Path, help="optional JSON mapping of exact ConfigName values to upstream model IDs")
+    report.add_argument("--dimension-map", type=Path, help="verified ElementCode to dimension mappings by upstream model")
+    report.add_argument("--correlation-map", type=Path, help="scope-bound verified BillDetailId to project or request mappings")
+    report.add_argument("--request-evidence", type=Path, help="scope-bound request usage and sanitized inference evidence")
     for action in (importer, report):
         action.add_argument("--payer-id", required=True)
         action.add_argument("--owner-id", required=True)
@@ -96,11 +99,24 @@ def _provider_command(database: Database, args: argparse.Namespace) -> dict:
         model_map = json.loads(_read_export_text(args.model_map), object_pairs_hook=_unique_model_map)
         if not isinstance(model_map, dict):
             raise ValueError("model map must be a JSON object")
+    if args.request_evidence is not None and not args.confirm_usage_scope:
+        raise ValueError("request evidence requires explicit confirmation of matching usage scope")
+    dimension_map = provider_costs.parse_operator_json(_read_export_text(args.dimension_map)) if args.dimension_map else None
+    correlation_map = provider_costs.parse_operator_json(_read_export_text(args.correlation_map)) if args.correlation_map else None
+    request_evidence = (
+        provider_costs.parse_operator_json(_read_export_text(args.request_evidence)) if args.request_evidence else None
+    )
     with database.connect() as connection:
         connection.execute("BEGIN")
-        return cost_reconciliation.build_report(
+        report = cost_reconciliation.build_report(
             connection, **scope, confirm_usage_scope=args.confirm_usage_scope, model_map=model_map,
+            dimension_map=dimension_map, correlation_map=correlation_map,
         )
+        if request_evidence is not None:
+            from . import provider_request_evidence
+
+            report["requestUsage"] = provider_request_evidence.build_report(connection, request_evidence, **scope)
+        return report
 
 
 def _run(args: argparse.Namespace) -> dict:

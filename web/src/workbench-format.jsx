@@ -4,6 +4,7 @@ export const statusNames = {
   revoked: '已撤销',
   queued: '排队中',
   running: '运行中',
+  in_progress: '进行中',
   pending: '待处理',
   submitting: '提交中',
   submission_unknown: '提交待确认',
@@ -15,6 +16,7 @@ export const statusNames = {
   cancelled: '已取消',
   expired: '已过期',
   unknown: '状态待确认',
+  uncertain: '待确认',
 };
 
 const dateFormatter = new Intl.DateTimeFormat('zh-CN', {

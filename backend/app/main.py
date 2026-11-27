@@ -10,7 +10,7 @@ import httpx
 from . import (
     accounts, admin_auth, admin_operations, asset_liveness, asset_presets, assets, billing, customer_billing,
     customer_tasks, developer_docs, general_models, key_limits, model_access, model_api, provider_costs, statements,
-    upload_registration, uploads, usage,
+    upload_registration, uploads, usage, usage_report,
     video_callbacks, video_task_management,
 )
 from .config import Settings
@@ -155,6 +155,7 @@ def create_app(
     app.include_router(developer_docs.router)
     app.include_router(video_task_management.router)
     app.include_router(usage.router)
+    app.include_router(usage_report.router)
     app.include_router(customer_tasks.router)
     app.include_router(customer_billing.router)
     return app

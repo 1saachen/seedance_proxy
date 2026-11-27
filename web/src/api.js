@@ -7,8 +7,8 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, csrfToken, bearerKey, signal } = {}) {
-  const headers = { Accept: 'application/json' };
+async function request(path, { method = 'GET', body, csrfToken, bearerKey, signal, csv = false } = {}) {
+  const headers = { Accept: csv ? 'text/csv' : 'application/json' };
   if (body) headers['Content-Type'] = 'application/json';
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
   if (bearerKey) headers.Authorization = `Bearer ${bearerKey}`;
@@ -23,7 +23,15 @@ async function request(path, { method = 'GET', body, csrfToken, bearerKey, signa
   });
   if (!response.ok) throw new ApiError(response.status);
   if (response.status === 204) return null;
-  return response.json();
+  return csv ? response.blob() : response.json();
+}
+
+function usageReportFilters({ keyId, model, from, to }) {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries({ keyId, model, from, to })) {
+    if (value) query.set(name, value);
+  }
+  return query;
 }
 
 export const customerApi = {
@@ -50,6 +58,13 @@ export const customerApi = {
     return request(`/usage?${query}`, { signal });
   },
   modelUsage: (month, signal) => request(`/model-usage?${new URLSearchParams({ month })}`, { signal }),
+  usageReport: (filters, page, signal) => {
+    const query = usageReportFilters(filters);
+    query.set('page', page);
+    query.set('pageSize', '50');
+    return request(`/usage/report?${query}`, { signal });
+  },
+  usageReportCsv: (filters, signal) => request(`/usage/report.csv?${usageReportFilters(filters)}`, { signal, csv: true }),
   billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
   billingExportUrl: (id) =>
     typeof id === 'string' && /^stmt_[0-9a-f]{32}$/.test(id) ? `${customerPath}/billing/${id}/export.csv` : null,
