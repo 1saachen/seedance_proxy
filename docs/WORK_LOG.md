@@ -6,7 +6,7 @@
 
 ### 快速接入文案
 
-- 首页、手册、工作台和 README 以 API 地址和业务 Key 介绍接入。补充 Postman 操作，将 Bash 的模型查询单独列出，方便客户先查模型再提交任务。 [New API 快速上手](https://docs.newapi.pro/zh/docs/guide/feature-guide/user/quick-start) · [OpenRouter 快速上手](https://openrouter.ai/docs/quickstart) · [LiteLLM 客户端接入](https://docs.litellm.ai/docs/proxy/client_setup/overview)
+- 首页、手册、工作台和 README 以 API 地址和业务 Key 介绍接入。以通用 HTTP 请求说明客户端接入，将 Bash 的模型查询单独列出，方便客户先查模型再提交任务。 [New API 快速上手](https://docs.newapi.pro/zh/docs/guide/feature-guide/user/quick-start) · [OpenRouter 快速上手](https://openrouter.ai/docs/quickstart) · [LiteLLM 客户端接入](https://docs.litellm.ai/docs/proxy/client_setup/overview)
 - 14 项前端测试和生产构建通过。Chrome 验证 1440、390、320 像素宽度下的文档展开、示例复制与本机模拟工作台。改动已更新到本机预览。
 
 ### 恢复首页配图

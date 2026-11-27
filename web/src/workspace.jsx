@@ -413,7 +413,7 @@ function SetupGuide() {
         <div>
           <h2 id="integration-heading">Seedance 快速接入</h2>
           <p>
-            在本地终端、Postman 或应用中，用 API 地址和项目业务 Key 发起请求。
+            用 API 地址和项目业务 Key，从终端、API 客户端或应用发起请求。
           </p>
         </div>
         <a href="/docs/#quickstart">开发者文档</a>

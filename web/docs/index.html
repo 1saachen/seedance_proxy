@@ -55,20 +55,13 @@
 
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">快速接入</h2>
-          <p>用本地终端、Postman 等 API 调试工具，或你自己的应用发起请求。调用前先准备下面两项信息。</p>
+          <p>可以从终端、支持自定义请求的 API 客户端，或应用代码调用。调用前先准备下面两项信息。</p>
           <ul>
             <li>在工作台查看 <strong>API 地址（Base URL）</strong>，调用时把接口路径拼在地址后面。</li>
             <li>登录<a href="/console/">客户工作台</a>，在「API 接入」创建并保存<strong>业务 API Key</strong>。完整 Key 只显示一次。</li>
           </ul>
-          <p>先发 <code>GET /v1/models</code> 确认可用模型。请求带上 <code>Authorization: Bearer &lt;API_KEY&gt;</code>，发送 JSON 时再加 <code>Content-Type: application/json</code>。第三方客户端需支持 Seedance 视频任务接口，或允许自定义 HTTP 请求。</p>
-          <details>
-            <summary>用 Postman 发送第一个请求</summary>
-            <ol>
-              <li>新建 <code>GET</code> 请求，URL 填 API 地址加 <code>/v1/models</code>。</li>
-              <li>在 Authorization 里选 Bearer Token，Token 一栏只填业务 Key，然后点击 Send。</li>
-              <li>从响应的 <code>data[].id</code> 选一个模型。创建视频时请求 <code>POST /api/v3/contents/generations/tasks</code>，在 Body 选择 raw 和 JSON，填入<a href="#examples">示例 JSON</a>，并在 Headers 设置 <code>Idempotency-Key</code>。</li>
-            </ol>
-          </details>
+          <p>先发 <code>GET /v1/models</code> 确认可用模型。把请求地址设为 API 地址加 <code>/v1/models</code>，并添加 <code>Authorization: Bearer &lt;API_KEY&gt;</code> 请求头。</p>
+          <p>从返回的 <code>data[].id</code> 选择模型，按<a href="#create-video">创建视频任务</a>的接口发送 JSON。若使用第三方客户端，需要支持该接口或能自定义 HTTP 请求。</p>
           <p>以下 Bash 和 Python 示例从运行命令的终端读取 <code>BASE_URL</code> 和 <code>API_KEY</code>。请妥善保管 Key，避免把真实 Key 写进公开代码或网页前端。</p>
           <figure class="docs-example">
             <figcaption>查看可用模型 · Bash</figcaption>
