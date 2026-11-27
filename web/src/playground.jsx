@@ -40,7 +40,7 @@ const failureMessages = {
   asset_provider_unavailable: '素材服务暂不可用，请稍后继续。',
   asset_submission_unknown: '素材服务尚未确认登记，请稍后继续核对。',
   asset_timeout: '参考素材仍在处理中，可继续查询。',
-  key_concurrency_exceeded: '当前业务 Key 已达到视频任务并发上限，请等已有任务结束后继续。',
+  key_concurrency_exceeded: '当前业务 Key 已达到共享并发上限，请等已有生成结束后继续。',
   key_rpm_exceeded: '当前业务 Key 请求过于频繁，请稍后继续。',
   provider_unavailable: '视频服务暂不可用，请稍后继续。',
   upload_expired: '文件暂存已过期，请重新开始并上传。',

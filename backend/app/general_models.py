@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -12,14 +13,16 @@ from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
+from anyio import CancelScope, create_task_group
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.routing import APIRoute
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
+from starlette.types import Receive, Scope, Send
 
+from . import key_limits
 from .accounts import (
     BusinessPrincipal, CurrentCustomer, authenticate_business_key, business_bearer, require_business_key,
 )
@@ -42,10 +45,11 @@ MAX_CHAT_RESPONSE_BYTES = 8 * 1024 * 1024
 MAX_IMAGE_RESPONSE_BYTES = 256 * 1024
 MAX_USAGE = 10**12
 IMAGE_RESULT_TTL = 24 * 60 * 60
-REQUEST_LIFETIME = 180
+REQUEST_LIFETIME = key_limits.GENERAL_REQUEST_LIFETIME_SECONDS
 UPSTREAM_TIMEOUT = httpx.Timeout(90, connect=5)
 SHANGHAI = timezone(timedelta(hours=8))
 PRIVATE_HEADERS = {"Cache-Control": "no-store"}
+LIMIT_RESPONSES = {429: {"description": "The API Key concurrency limit or a request rate limit was reached"}}
 Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
 ModelType = Literal["text", "image"]
@@ -119,6 +123,8 @@ def initialize(connection: sqlite3.Connection) -> None:
             ON general_model_calls(project_id, created_at DESC, id DESC);
         CREATE INDEX IF NOT EXISTS general_model_calls_active
             ON general_model_calls(created_at) WHERE status = 'in_progress';
+        CREATE INDEX IF NOT EXISTS general_model_calls_active_by_key
+            ON general_model_calls(key_id, modality, created_at) WHERE status = 'in_progress';
         CREATE INDEX IF NOT EXISTS general_model_calls_cached_results
             ON general_model_calls(cached_result_expires_at) WHERE cached_result_json IS NOT NULL;
     """)
@@ -238,15 +244,15 @@ def _reserve(
     database: Database, principal: BusinessPrincipal, kind: ModelType, model: str, upstream_model: str,
     *, idempotency_key: str | None = None, fingerprint: str | None = None,
 ) -> tuple[str, int, sqlite3.Row | None]:
-    now = int(time.time())
     request_id = ("chatcmpl-" if kind == "text" else "img_") + uuid4().hex
     key_hash = _digest(idempotency_key) if idempotency_key is not None else None
     with database.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        now = int(time.time())
         connection.execute("""
             UPDATE general_model_calls SET status = 'uncertain'
             WHERE status = 'in_progress' AND created_at <= ?
-        """, (now - REQUEST_LIFETIME,))
+        """, (key_limits.general_request_cutoff(now),))
         connection.execute("""
             UPDATE general_model_calls SET cached_result_json = NULL
             WHERE cached_result_json IS NOT NULL AND cached_result_expires_at <= ?
@@ -258,6 +264,7 @@ def _reserve(
             """, (principal.project_id, principal.key_id, kind, key_hash)).fetchone()
             if existing is not None:
                 return request_id, now, existing
+        key_limits.enforce_concurrency(connection, principal.key_id)
         connection.execute("""
             INSERT INTO general_model_calls (
                 id, project_id, key_id, modality, model, upstream_model, idempotency_hash, request_hash, status, created_at
@@ -284,6 +291,42 @@ def _finish(
             json.dumps(cache, separators=(",", ":")) if cache is not None else None,
             cache_created_at + IMAGE_RESULT_TTL if cache_created_at is not None else None, request_id,
         ))
+
+
+def _mark_abandoned(database: Database, request_id: str) -> None:
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE general_model_calls SET status = 'uncertain' WHERE id = ? AND status = 'in_progress'",
+            (request_id,),
+        )
+
+
+async def _close_upstream(upstream: httpx.Response) -> None:
+    with CancelScope(shield=True):
+        await upstream.aclose()
+
+
+async def _release_abandoned(
+    database: Database, request_id: str, upstream: httpx.Response | None = None,
+) -> None:
+    with CancelScope(shield=True):
+        try:
+            if upstream is not None:
+                await upstream.aclose()
+        finally:
+            await run_in_threadpool(_mark_abandoned, database, request_id)
+
+
+@asynccontextmanager
+async def _release_on_error(database: Database, request_id: str):
+    try:
+        yield
+    except HTTPException:
+        # Expected provider errors are already recorded after closing the upstream response.
+        raise
+    except (Exception, asyncio.CancelledError):
+        await _release_abandoned(database, request_id)
+        raise
 
 
 def _replay_image(existing: sqlite3.Row, fingerprint: str) -> JSONResponse:
@@ -328,7 +371,7 @@ async def _upstream(
         raise error from None
     if response.is_success:
         return response
-    await response.aclose()
+    await _close_upstream(response)
     error = _provider_failure(response.status_code)
     definite_failure = 400 <= response.status_code < 500 and response.status_code != 408
     await run_in_threadpool(
@@ -337,16 +380,20 @@ async def _upstream(
     raise error
 
 
-async def _read_json(response: httpx.Response, limit: int) -> dict:
-    content = bytearray()
-    async for chunk in response.aiter_bytes(8192):
-        if len(content) + len(chunk) > limit:
-            raise ValueError("Provider response exceeds the limit")
-        content.extend(chunk)
-    value = json.loads(content)
-    if not isinstance(value, dict):
-        raise ValueError("Invalid provider response")
-    return value
+async def _read_json(response: httpx.Response, limit: int, deadline: float) -> dict:
+    try:
+        async with asyncio.timeout_at(deadline):
+            content = bytearray()
+            async for chunk in response.aiter_bytes(8192):
+                if len(content) + len(chunk) > limit:
+                    raise ValueError("Provider response exceeds the limit")
+                content.extend(chunk)
+            value = json.loads(content)
+            if not isinstance(value, dict):
+                raise ValueError("Invalid provider response")
+            return value
+    finally:
+        await _close_upstream(response)
 
 
 def _result_envelope(model: str, request_id: str, created: int, *, stream: bool) -> dict:
@@ -412,54 +459,110 @@ async def _sse_lines(response: httpx.Response) -> AsyncIterator[bytes]:
         yield bytes(active).removesuffix(b"\r")
 
 
-async def _chat_stream(
-    upstream: httpx.Response, database: Database, envelope: dict, include_usage: bool, deadline: float,
-) -> AsyncIterator[bytes]:
-    request_id = envelope["id"]
-    settled = False
-    usage = {}
-    saw_choice = False
-    try:
-        async with asyncio.timeout_at(deadline):
-            async for line in _sse_lines(upstream):
-                if not line.startswith(b"data:"):
-                    continue
-                data = line.removeprefix(b"data:").strip()
-                if data == b"[DONE]":
-                    if not saw_choice:
-                        raise ValueError("A completed chat stream needs a choice")
-                    await run_in_threadpool(_finish, database, request_id, status="succeeded", usage=_usage_fields(usage))
-                    settled = True
-                    yield b"data: [DONE]\n\n"
-                    return
-                raw = json.loads(data)
-                if not isinstance(raw, dict):
-                    raise ValueError("Invalid stream object")
-                chunk, reported = _chat_response(raw, envelope, stream=True)
-                if reported:
-                    usage.update(reported)
-                if chunk["choices"]:
-                    saw_choice = True
-                elif not (include_usage and reported):
-                    continue
-                if not include_usage:
-                    chunk.pop("usage", None)
-                yield b"data: " + json.dumps(chunk, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n\n"
-        raise ValueError("Provider closed chat before its terminal event")
-    except (TimeoutError, ValueError, httpx.RequestError):
-        yield b'data: {"error":{"code":"model_result_unknown","message":"The provider did not finish the chat"}}\n\n'
-        yield b"data: [DONE]\n\n"
-    finally:
+async def _cancel_on_disconnect(receive: Receive, pending: CancelScope) -> None:
+    while (await receive())["type"] != "http.disconnect":
+        pass
+    pending.cancel()
+
+
+async def _open_chat_stream(
+    request: Request, parameters: dict, headers: dict[str, str], request_id: str, deadline: float,
+) -> httpx.Response | None:
+    upstream = None
+    error = None
+    async with create_task_group() as group:
+        group.start_soon(_cancel_on_disconnect, request.receive, group.cancel_scope)
         try:
-            if not settled:
-                # A client disconnect can cancel the response generator. Keep the reserved call
-                # for reconciliation without making another provider request.
-                _finish(database, request_id, status="uncertain")
+            upstream = await _upstream(request, CHAT_PATH, parameters, headers, request_id, deadline)
+        except HTTPException as exc:
+            error = exc
         finally:
-            await upstream.aclose()
+            group.cancel_scope.cancel()
+    if error is not None:
+        raise error
+    return upstream
 
 
-@router.post("/v1/chat/completions", tags=["Text models"])
+class _TrackedChatResponse(StreamingResponse):
+    def __init__(
+        self, upstream: httpx.Response, database: Database, envelope: dict, include_usage: bool, deadline: float,
+    ) -> None:
+        self._upstream = upstream
+        self._database = database
+        self._request_id = envelope["id"]
+        self._settled = False
+        self._chunks = self._stream(envelope, include_usage, deadline)
+        super().__init__(
+            self._chunks, media_type="text/event-stream", headers={**PRIVATE_HEADERS, "X-Accel-Buffering": "no"},
+        )
+
+    async def _stream(
+        self, envelope: dict, include_usage: bool, deadline: float,
+    ) -> AsyncGenerator[bytes, None]:
+        upstream = self._upstream
+        database = self._database
+        request_id = self._request_id
+        usage = {}
+        saw_choice = False
+        try:
+            async with asyncio.timeout_at(deadline):
+                async for line in _sse_lines(upstream):
+                    if not line.startswith(b"data:"):
+                        continue
+                    data = line.removeprefix(b"data:").strip()
+                    if data == b"[DONE]":
+                        if not saw_choice:
+                            raise ValueError("A completed chat stream needs a choice")
+                        await run_in_threadpool(
+                            _finish, database, request_id, status="succeeded", usage=_usage_fields(usage),
+                        )
+                        self._settled = True
+                        yield b"data: [DONE]\n\n"
+                        return
+                    raw = json.loads(data)
+                    if not isinstance(raw, dict):
+                        raise ValueError("Invalid stream object")
+                    chunk, reported = _chat_response(raw, envelope, stream=True)
+                    if reported:
+                        usage.update(reported)
+                    if chunk["choices"]:
+                        saw_choice = True
+                    elif not (include_usage and reported):
+                        continue
+                    if not include_usage:
+                        chunk.pop("usage", None)
+                    yield b"data: " + json.dumps(chunk, ensure_ascii=True, separators=(",", ":")).encode("ascii") + b"\n\n"
+            raise ValueError("Provider closed chat before its terminal event")
+        except (TimeoutError, ValueError, httpx.RequestError):
+            await _release_abandoned(database, request_id, upstream)
+            self._settled = True
+            yield b'data: {"error":{"code":"model_result_unknown","message":"The provider did not finish the chat"}}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            # Listen even when the server supports send errors, since a paused provider may send no chunks.
+            async with create_task_group() as group:
+                group.start_soon(_cancel_on_disconnect, receive, group.cancel_scope)
+                try:
+                    await self.stream_response(send)
+                except OSError:
+                    pass  # A disconnected client can also be reported by the ASGI sender.
+                finally:
+                    group.cancel_scope.cancel()
+        finally:
+            # ASGI may disconnect before the generator starts, or while sending an already-yielded chunk.
+            with CancelScope(shield=True):
+                try:
+                    await self._chunks.aclose()
+                finally:
+                    if self._settled:
+                        await self._upstream.aclose()
+                    else:
+                        await _release_abandoned(self._database, self._request_id, self._upstream)
+
+
+@router.post("/v1/chat/completions", tags=["Text models"], responses=LIMIT_RESPONSES)
 async def chat_completions(payload: ChatRequest, request: Request, principal: Principal):
     model = payload.model
     upstream_model = TEXT_MODELS[model]
@@ -470,32 +573,32 @@ async def chat_completions(payload: ChatRequest, request: Request, principal: Pr
         # Meter usage on the server even when the caller does not request an SSE usage frame.
         parameters["stream_options"] = {"include_usage": True}
     database = request.app.state.db
+    deadline = asyncio.get_running_loop().time() + REQUEST_LIFETIME
     request_id, created, _ = await run_in_threadpool(_reserve, database, principal, "text", model, upstream_model)
     envelope = _result_envelope(model, request_id, created, stream=payload.stream)
-    deadline = asyncio.get_running_loop().time() + REQUEST_LIFETIME
-    upstream = await _upstream(request, CHAT_PATH, parameters, headers, request_id, deadline)
-    if payload.stream:
-        if upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "text/event-stream":
-            await upstream.aclose()
+    async with _release_on_error(database, request_id):
+        if payload.stream:
+            upstream = await _open_chat_stream(request, parameters, headers, request_id, deadline)
+            if upstream is None:
+                await _release_abandoned(database, request_id)
+                return Response(status_code=499, headers=PRIVATE_HEADERS)
+            if upstream.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "text/event-stream":
+                await _close_upstream(upstream)
+                error = _invalid_provider_response()
+                await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
+                raise error
+            send_usage = payload.stream_options is not None and payload.stream_options.include_usage
+            return _TrackedChatResponse(upstream, database, envelope, send_usage, deadline)
+        upstream = await _upstream(request, CHAT_PATH, parameters, headers, request_id, deadline)
+        try:
+            raw = await _read_json(upstream, MAX_CHAT_RESPONSE_BYTES, deadline)
+            body, reported = _chat_response(raw, envelope, stream=False)
+        except (TimeoutError, ValueError, httpx.RequestError):
             error = _invalid_provider_response()
             await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
-            raise error
-        send_usage = payload.stream_options is not None and payload.stream_options.include_usage
-        return StreamingResponse(
-            _chat_stream(upstream, database, envelope, send_usage, deadline), media_type="text/event-stream",
-            headers={**PRIVATE_HEADERS, "X-Accel-Buffering": "no"}, background=BackgroundTask(upstream.aclose),
-        )
-    try:
-        async with asyncio.timeout_at(deadline):
-            body, reported = _chat_response(await _read_json(upstream, MAX_CHAT_RESPONSE_BYTES), envelope, stream=False)
-    except (TimeoutError, ValueError, httpx.RequestError):
-        error = _invalid_provider_response()
-        await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
-        raise error from None
-    finally:
-        await upstream.aclose()
-    await run_in_threadpool(_finish, database, request_id, status="succeeded", usage=_usage_fields(reported))
-    return JSONResponse(body, headers=PRIVATE_HEADERS)
+            raise error from None
+        await run_in_threadpool(_finish, database, request_id, status="succeeded", usage=_usage_fields(reported))
+        return JSONResponse(body, headers=PRIVATE_HEADERS)
 
 
 def _image_response(raw: dict, model: str, request_id: str, created: int) -> tuple[dict, dict[str, int]]:
@@ -520,7 +623,7 @@ def _image_response(raw: dict, model: str, request_id: str, created: int) -> tup
     }, usage
 
 
-@router.post("/v1/images/generations", tags=["Image models"])
+@router.post("/v1/images/generations", tags=["Image models"], responses=LIMIT_RESPONSES)
 async def generate_image(
     payload: ImageRequest, request: Request, principal: Principal, idempotency_key: IdempotencyHeader = None,
 ):
@@ -532,6 +635,7 @@ async def generate_image(
     upstream_model = IMAGE_MODELS[model]
     headers = _provider_headers(request)
     database = request.app.state.db
+    deadline = asyncio.get_running_loop().time() + REQUEST_LIFETIME
     request_id, created, existing = await run_in_threadpool(
         _reserve, database, principal, "image", model, upstream_model,
         idempotency_key=idempotency_key, fingerprint=fingerprint,
@@ -539,25 +643,21 @@ async def generate_image(
     if existing is not None:
         return _replay_image(existing, fingerprint)
     parameters["model"] = upstream_model
-    deadline = asyncio.get_running_loop().time() + REQUEST_LIFETIME
-    upstream = await _upstream(request, IMAGE_PATH, parameters, headers, request_id, deadline)
-    try:
-        async with asyncio.timeout_at(deadline):
-            body, reported = _image_response(
-                await _read_json(upstream, MAX_IMAGE_RESPONSE_BYTES), model, request_id, created,
-            )
-    except (TimeoutError, ValueError, httpx.RequestError):
-        error = _invalid_provider_response()
-        await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
-        raise error from None
-    finally:
-        await upstream.aclose()
-    retain_result = idempotency_key is not None
-    await run_in_threadpool(
-        _finish, database, request_id, status="succeeded", usage=_usage_fields(reported),
-        cache=body if retain_result else None, cache_created_at=created if retain_result else None,
-    )
-    return JSONResponse(body, headers=PRIVATE_HEADERS)
+    async with _release_on_error(database, request_id):
+        upstream = await _upstream(request, IMAGE_PATH, parameters, headers, request_id, deadline)
+        try:
+            raw = await _read_json(upstream, MAX_IMAGE_RESPONSE_BYTES, deadline)
+            body, reported = _image_response(raw, model, request_id, created)
+        except (TimeoutError, ValueError, httpx.RequestError):
+            error = _invalid_provider_response()
+            await run_in_threadpool(_finish, database, request_id, status="uncertain", error=error)
+            raise error from None
+        retain_result = idempotency_key is not None
+        await run_in_threadpool(
+            _finish, database, request_id, status="succeeded", usage=_usage_fields(reported),
+            cache=body if retain_result else None, cache_created_at=created if retain_result else None,
+        )
+        return JSONResponse(body, headers=PRIVATE_HEADERS)
 
 
 def _usage_bounds(month: str | None) -> tuple[str, int, int]:
@@ -595,7 +695,7 @@ def customer_model_usage(
         """ + scope + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
         (*bindings, page_size, (page - 1) * page_size)).fetchall()
     items = []
-    cutoff = int(time.time()) - REQUEST_LIFETIME
+    cutoff = key_limits.general_request_cutoff(int(time.time()))
     for record in records:
         item = dict(record)
         timestamp = item.pop("created_at")

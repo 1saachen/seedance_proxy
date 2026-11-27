@@ -135,7 +135,9 @@ curl -fsS "$BASE_URL/v1/images/generations" \
                 <tr><td><code>401</code></td><td>核对请求头中的业务 Key，确认尚未撤销。</td></tr>
                 <tr><td><code>409</code></td><td>检查幂等键是否已用于另一个请求，或原请求是否仍在处理。</td></tr>
                 <tr><td><code>422</code></td><td>从模型列表选择对应类型的 ID，核对 JSON 字段和值。</td></tr>
-                <tr><td><code>429</code></td><td>降低请求频率，等待后重试。</td></tr>
+                <tr><td><code>429 key_concurrency_exceeded</code></td><td>业务 Key 的共享并发已满。等待已有生成结束后重试。流式对话持续占用并发直到完成或断开。</td></tr>
+                <tr><td><code>429 key_rpm_exceeded</code></td><td>业务 Key 已达最近 60 秒的请求上限。按 <code>Retry-After</code> 指定的秒数等待后重试。</td></tr>
+                <tr><td><code>429 provider_rate_limited</code></td><td>模型供应商暂时限流。降低请求频率，等待后重试。</td></tr>
                 <tr><td><code>502</code> / <code>503</code></td><td>服务可能暂时不可用。图片重试继续使用原幂等键。</td></tr>
               </tbody>
             </table>

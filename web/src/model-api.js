@@ -1,7 +1,8 @@
 export class ModelApiError extends Error {
-  constructor(status) {
+  constructor(status, code = null) {
     super(`Model API: HTTP ${status}`);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -18,7 +19,11 @@ async function request(path, key, { body, idempotencyKey, signal } = {}) {
     body: body ? JSON.stringify(body) : undefined,
     signal,
   });
-  if (!response.ok) throw new ModelApiError(response.status);
+  if (!response.ok) {
+    const payload = response.status === 429 ? await response.json().catch(() => null) : null;
+    const code = payload?.detail?.code;
+    throw new ModelApiError(response.status, typeof code === 'string' ? code : null);
+  }
   return response.json();
 }
 

@@ -41,6 +41,17 @@ test('model usage uses only the customer cookie and supplied month', async (cont
   assert.deepEqual(await customerApi.modelUsage('2026-11'), { items: [] });
 });
 
+test('shared concurrency errors preserve the server code without retrying generation', async (context) => {
+  const fetch = context.mock.method(globalThis, 'fetch', async () => Response.json({
+    detail: { code: 'key_concurrency_exceeded' },
+  }, { status: 429 }));
+
+  await assert.rejects(modelApi.image('fixture-key', { prompt: 'Coastal town' }, 'request-id'), {
+    status: 429, code: 'key_concurrency_exceeded',
+  });
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
 test('image rendering rejects insecure and credential-bearing URLs', () => {
   assert.equal(httpsImageUrl('https://example.test/image.png'), 'https://example.test/image.png');
   for (const unsafe of ['javascript:alert(1)', 'http://example.test/image.png', 'https://user:pwd@example.test/image.png', '/image.png', null]) {

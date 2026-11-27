@@ -1,6 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 import sqlite3
+import time
 
 import httpx
 import pytest
@@ -19,6 +20,10 @@ ADMIN_PASSWORD = "synthetic-admin-passphrase"
 CUSTOMER_PASSWORD = "synthetic-customer-passphrase"
 UPSTREAM_MODEL = SEEDANCE_MODELS[DRAFT_MODEL].upstream_id
 MONTH = "2025-01"
+EMPTY_KEY_USAGE = {
+    "activeTasks": 0, "activeTextRequests": 0, "activeImageRequests": 0, "activeConcurrentRequests": 0,
+    "requestsLastMinute": 0,
+}
 
 
 def _client(path: Path) -> TestClient:
@@ -99,7 +104,7 @@ def test_operator_provisions_unique_customers_and_sees_only_metadata_in_project_
 
         key = _customer_key(client, credentials["email"])
         assert client.get(f"{ADMIN}/projects/{project['id']}/keys").json() == {"keys": [{
-            **key["key"], "concurrencyLimit": None, "rpmLimit": None, "activeTasks": 0, "requestsLastMinute": 0,
+            **key["key"], "concurrencyLimit": None, "rpmLimit": None, **EMPTY_KEY_USAGE,
         }]}
         assert client.get(f"{ADMIN}/projects/{other['id']}/keys").json() == {"keys": []}
         search = client.get(f"{ADMIN}/projects", params={"q": "CUSTOMER@EXAMPLE", "pageSize": 1}).json()
@@ -148,7 +153,7 @@ def test_operator_key_limit_updates_are_scoped_strict_and_audited_once(tmp_path:
         ):
             assert client.put(url, headers=csrf, json=payload).status_code == 422
 
-        default_key = {**key["key"], **unrestricted, "activeTasks": 0, "requestsLastMinute": 0}
+        default_key = {**key["key"], **unrestricted, **EMPTY_KEY_USAGE}
         assert client.put(url, headers=csrf, json=unrestricted).json() == default_key
         updated = client.put(url, headers=csrf, json=configured)
         assert updated.status_code == 200
@@ -164,8 +169,22 @@ def test_operator_key_limit_updates_are_scoped_strict_and_audited_once(tmp_path:
 
         with client.app.state.db.connect() as connection:
             _record_usage(connection, project["id"], key_id, "active_task", "2025-01-01 00:00:00", None, "running")
+            now = int(time.time())
+            connection.executemany("""
+                INSERT INTO general_model_calls (id, project_id, key_id, modality, model, upstream_model, status, created_at)
+                VALUES (?, ?, ?, ?, 'fixture', 'fixture', ?, ?)
+            """, [
+                ("text_live", project["id"], key_id, "text", "in_progress", now),
+                ("image_live", project["id"], key_id, "image", "in_progress", now),
+                ("image_finished", project["id"], key_id, "image", "succeeded", now),
+                ("text_uncertain", project["id"], key_id, "text", "uncertain", now),
+                ("image_abandoned", project["id"], key_id, "image", "in_progress", 0),
+            ])
             assert key_limits.admit_request(connection, key_id) is None
-        observed_key = {**default_key, "activeTasks": 1, "requestsLastMinute": 1}
+        observed_key = {
+            **default_key, "activeTasks": 1, "activeTextRequests": 1, "activeImageRequests": 1,
+            "activeConcurrentRequests": 3, "requestsLastMinute": 1,
+        }
         assert client.get(keys_url).json() == {"keys": [observed_key]}
 
         customer = _open_customer(client, project["email"])

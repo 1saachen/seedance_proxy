@@ -8,6 +8,7 @@ const keyPattern = /^vap_live_[A-Za-z0-9_-]{43}$/;
 function displayError(error) {
   if (error.status === 401 || error.status === 403) return '请使用当前项目中有效的业务 Key。';
   if (error.status === 409) return '图片请求尚待确认。请稍后用相同参数重试。';
+  if (error.code === 'key_concurrency_exceeded') return '当前业务 Key 已达到共享并发上限，请等已有生成结束后重试。';
   if (error.status === 503) return '当前模型暂时不可用。';
   return requestErrorMessage(error);
 }

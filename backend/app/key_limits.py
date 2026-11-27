@@ -9,11 +9,27 @@ MAX_RPM_LIMIT = 60_000
 MICROSECONDS_PER_SECOND = 1_000_000
 RPM_WINDOW_US = 60 * MICROSECONDS_PER_SECOND
 UNCONFIRMED_TASK_LIFETIME_SECONDS = 72 * 3600
+GENERAL_REQUEST_LIFETIME_SECONDS = 180
+GENERAL_REQUEST_CLEANUP_GRACE_SECONDS = 5
 
 _ACTIVE_STATUSES = "status IN ('submitting', 'submission_unknown', 'queued', 'running')"
 _ACTIVE_TASK = (
     _ACTIVE_STATUSES + " AND (status IN ('queued', 'running') OR datetime(created_at) > datetime(?, 'unixepoch'))"
 )
+
+
+# Both reservation and metrics use the same predicates and cutoff instant.
+_ACTIVE_COUNTS = f"""
+    (SELECT COUNT(*) FROM video_tasks
+     WHERE key_id = business_keys.id AND {_ACTIVE_TASK}) AS activeTasks,
+    (SELECT COUNT(*) FROM general_model_calls
+     WHERE key_id = business_keys.id AND status = 'in_progress' AND modality = 'text'
+         AND created_at > ?) AS activeTextRequests,
+    (SELECT COUNT(*) FROM general_model_calls
+     WHERE key_id = business_keys.id AND status = 'in_progress' AND modality = 'image'
+         AND created_at > ?) AS activeImageRequests
+"""
+_COUNT_FIELDS = ("activeTasks", "activeTextRequests", "activeImageRequests")
 
 
 def _now_us() -> int:
@@ -22,6 +38,19 @@ def _now_us() -> int:
 
 def _submission_cutoff(now_us: int) -> int:
     return now_us // MICROSECONDS_PER_SECOND - UNCONFIRMED_TASK_LIFETIME_SECONDS
+
+
+def general_request_cutoff(now: int) -> int:
+    return now - GENERAL_REQUEST_LIFETIME_SECONDS - GENERAL_REQUEST_CLEANUP_GRACE_SECONDS
+
+
+def _active_cutoffs(now_us: int) -> tuple[int, int, int]:
+    general_cutoff = general_request_cutoff(now_us // MICROSECONDS_PER_SECOND)
+    return _submission_cutoff(now_us), general_cutoff, general_cutoff
+
+
+def _total_active(row: sqlite3.Row) -> int:
+    return sum(row[field] for field in _COUNT_FIELDS)
 
 
 def initialize(connection: sqlite3.Connection) -> None:
@@ -83,36 +112,39 @@ def admit_request(connection: sqlite3.Connection, key_id: str) -> int | None:
 
 
 def enforce_concurrency(connection: sqlite3.Connection, key_id: str) -> None:
-    """Check capacity in the same write transaction that reserves the new video task."""
+    """Check all model capacity in the same write transaction as the new reservation."""
     limits = connection.execute(
         "SELECT concurrency_limit FROM business_key_limits WHERE key_id = ?", (key_id,),
     ).fetchone()
     if limits is None or limits["concurrency_limit"] is None:
         return
-    active = connection.execute(
-        f"SELECT COUNT(*) FROM video_tasks WHERE key_id = ? AND {_ACTIVE_TASK}",
-        (key_id, _submission_cutoff(_now_us())),
-    ).fetchone()[0]
-    if active >= limits["concurrency_limit"]:
-        raise HTTPException(429, {"code": "key_concurrency_exceeded", "message": "API Key reached its video concurrency limit"})
+    counts = connection.execute(
+        f"SELECT {_ACTIVE_COUNTS} FROM business_keys WHERE id = ?", (*_active_cutoffs(_now_us()), key_id),
+    ).fetchone()
+    if _total_active(counts) >= limits["concurrency_limit"]:
+        raise HTTPException(429, {"code": "key_concurrency_exceeded", "message": "API Key reached its concurrency limit"})
 
 
 def project_key_metrics(
     connection: sqlite3.Connection, project_id: str, *, key_id: str | None = None,
 ) -> dict[str, dict]:
     now = _now_us()
-    parameters = (_submission_cutoff(now), now - RPM_WINDOW_US, project_id)
+    parameters = (*_active_cutoffs(now), now - RPM_WINDOW_US, project_id)
     key_filter = ""
     if key_id is not None:
         key_filter = " AND business_keys.id = ?"
         parameters = (*parameters, key_id)
     rows = connection.execute(f"""
         SELECT business_keys.id, limits.concurrency_limit AS concurrencyLimit, limits.rpm_limit AS rpmLimit,
-            (SELECT COUNT(*) FROM video_tasks
-             WHERE key_id = business_keys.id AND {_ACTIVE_TASK}) AS activeTasks,
+            {_ACTIVE_COUNTS},
             (SELECT COUNT(*) FROM business_key_requests
              WHERE key_id = business_keys.id AND accepted_at > ?) AS requestsLastMinute
         FROM business_keys LEFT JOIN business_key_limits AS limits ON limits.key_id = business_keys.id
         WHERE business_keys.project_id = ?{key_filter}
     """, parameters)
-    return {row["id"]: {name: row[name] for name in row.keys() if name != "id"} for row in rows}
+    return {
+        row["id"]: {
+            **{name: row[name] for name in row.keys() if name != "id"}, "activeConcurrentRequests": _total_active(row),
+        }
+        for row in rows
+    }

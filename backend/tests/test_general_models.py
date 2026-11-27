@@ -1,3 +1,4 @@
+import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -5,6 +6,8 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 import httpx
+import pytest
+from starlette.requests import ClientDisconnect
 
 from app import general_models, key_limits
 from app.config import Settings
@@ -128,7 +131,9 @@ def test_streaming_delivers_chunks_and_records_opt_in_and_hidden_usage(tmp_path:
         return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, content=chunks)
 
     with TestClient(_app(tmp_path / "stream.sqlite", provider)) as client:
-        headers, _ = _customer(client, "stream")
+        headers, key_id = _customer(client, "stream")
+        with client.app.state.db.connect() as connection:
+            key_limits.set_limits(connection, key_id, 1, None)
         for include_usage in (True, False):
             with client.stream(
                 "POST", CHAT_PATH, headers=headers, json=_chat(stream=True, stream_options={"include_usage": include_usage}),
@@ -279,3 +284,125 @@ def test_expired_image_replay_keeps_usage_unknown_without_repeating_provider_cal
         assert usage["items"][0]["generatedImages"] is None
         with client.app.state.db.connect() as connection:
             assert connection.execute("SELECT cached_result_json FROM general_model_calls").fetchone()[0] is None
+
+
+@pytest.mark.parametrize("disconnect", ["receive", "receive_24", "send", "before_headers"])
+def test_stream_disconnect_closes_provider_and_releases_shared_slot(tmp_path: Path, disconnect: str):
+    upstream_closed = threading.Event()
+    calls = 0
+    notify_provider_started = None
+
+    class HeldStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
+            await asyncio.Future()
+
+        async def aclose(self):
+            upstream_closed.set()
+
+    async def provider(request):
+        nonlocal calls
+        calls += 1
+        if request.url.path == general_models.CHAT_PATH:
+            if notify_provider_started is not None:
+                notify_provider_started()
+                try:
+                    await asyncio.Future()
+                finally:
+                    upstream_closed.set()
+            return httpx.Response(200, headers={"Content-Type": "text/event-stream"}, stream=HeldStream())
+        return httpx.Response(200, json=_image_result(1))
+
+    app = _app(tmp_path / "disconnect.sqlite", provider)
+    with TestClient(app) as client:
+        auth, key_id = _customer(client, "disconnect")
+        with app.state.db.connect() as connection:
+            key_limits.set_limits(connection, key_id, 1, None)
+            project = connection.execute("SELECT project_id FROM business_keys WHERE id = ?", (key_id,)).fetchone()[0]
+
+        async def run_stream():
+            nonlocal notify_provider_started
+            disconnect_event = asyncio.Event()
+            sent_request = False
+            sent_content = False
+            body = json.dumps(_chat(stream=True)).encode()
+            path = CHAT_PATH
+            scope = {
+                "type": "http", "asgi": {"version": "3.0", "spec_version": "2.3" if disconnect == "receive" else "2.4"},
+                "http_version": "1.1", "method": "POST", "scheme": "http", "path": path, "raw_path": path.encode(),
+                "query_string": b"", "root_path": "", "headers": [
+                    (b"content-type", b"application/json"), (b"authorization", auth["Authorization"].encode()),
+                ],
+            }
+
+            async def receive():
+                nonlocal sent_request
+                if not sent_request:
+                    sent_request = True
+                    return {"type": "http.request", "body": body, "more_body": False}
+                await disconnect_event.wait()
+                return {"type": "http.disconnect"}
+
+            def check_slot_is_occupied():
+                with app.state.db.connect() as connection:
+                    metrics = key_limits.project_key_metrics(connection, project)[key_id]
+                    assert metrics["activeTextRequests"] == metrics["activeConcurrentRequests"] == 1
+
+            async def send(message):
+                nonlocal sent_content
+                if not message.get("body", b"").startswith(b"data: "):
+                    return
+                sent_content = True
+                check_slot_is_occupied()
+                if disconnect == "send":
+                    raise BrokenPipeError("synthetic client disconnect")
+                disconnect_event.set()
+
+            if disconnect == "before_headers":
+                def abort_pre_header_stream():
+                    check_slot_is_occupied()
+                    disconnect_event.set()
+
+                notify_provider_started = abort_pre_header_stream
+
+            async with asyncio.timeout(5):
+                try:
+                    await app(scope, receive, send)
+                except (BrokenPipeError, ClientDisconnect):
+                    assert disconnect == "send"
+            assert sent_content == (disconnect != "before_headers")
+
+        client.portal.call(run_stream)
+        assert upstream_closed.is_set()
+        with app.state.db.connect() as connection:
+            metrics = key_limits.project_key_metrics(connection, project)[key_id]
+            assert metrics["activeTextRequests"] == metrics["activeConcurrentRequests"] == 0
+            assert connection.execute("SELECT status FROM general_model_calls").fetchone()[0] == "uncertain"
+        assert client.post(IMAGE_PATH, headers=auth, json=IMAGE_REQUEST).status_code == 200
+        assert calls == 2
+
+
+def test_image_failure_and_timeout_release_shared_slots(tmp_path: Path):
+    attempts = 0
+
+    def provider(request):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(400)
+        if attempts == 2:
+            raise httpx.ReadTimeout("synthetic provider timeout", request=request)
+        return httpx.Response(200, json=_image_result(1))
+
+    app = _app(tmp_path / "image-release.sqlite", provider)
+    with TestClient(app) as client:
+        auth, key_id = _customer(client, "image-release")
+        with app.state.db.connect() as connection:
+            key_limits.set_limits(connection, key_id, 1, None)
+        assert client.post(IMAGE_PATH, headers=auth, json=IMAGE_REQUEST).status_code == 422
+        assert client.post(IMAGE_PATH, headers=auth, json=IMAGE_REQUEST).status_code == 502
+        assert client.post(IMAGE_PATH, headers=auth, json=IMAGE_REQUEST).status_code == 200
+        assert attempts == 3
+        with app.state.db.connect() as connection:
+            rows = connection.execute("SELECT status FROM general_model_calls ORDER BY rowid").fetchall()
+        assert [row[0] for row in rows] == ["failed", "uncertain", "succeeded"]

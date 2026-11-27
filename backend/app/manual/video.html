@@ -682,7 +682,7 @@ def verify_callback(api_key, timestamp, event_id, signature, raw_body):
                 <tr><td><code>409 upload_registration_pending</code>、<code>upload_expired</code>、<code>asset_not_active</code></td><td>登记待核对时保留上传 ID，过期后重新上传，素材处理中继续查询直到 <code>Active</code>。</td></tr>
                 <tr><td><code>409 asset_deletion_pending</code>、<code>502 asset_mutation_unknown</code></td><td>素材变更结果待确认。删除请求可带原资源 ID 重试，确认删除后重复提交返回 <code>204</code>。</td></tr>
                 <tr><td><code>413 file_too_large</code>、<code>video_request_too_large</code>、<code>415 media_type_mismatch</code>、<code>422 invalid_request</code></td><td>检查大小、编码、请求字段和模型能力，修改后再提交。</td></tr>
-                <tr><td><code>429 key_concurrency_exceeded</code></td><td>本业务 Key 的视频任务并发已满。已有任务结束后再提交，重试同一请求沿用原幂等键。</td></tr>
+                <tr><td><code>429 key_concurrency_exceeded</code></td><td>本业务 Key 的共享并发已满。视频任务、文本对话和图片生成共用上限。已有推理结束后再提交，重试同一请求沿用原幂等键。</td></tr>
                 <tr><td><code>429 key_rpm_exceeded</code></td><td>本业务 Key 已达最近 60 秒请求上限。按响应头 <code>Retry-After</code> 指定的秒数等待后重试。查询和素材操作也占用请求额度。</td></tr>
                 <tr><td><code>429 video_daily_limit</code></td><td>项目每日提交上限已达。默认每项目 5 次，北京时间自然日计算。</td></tr>
                 <tr><td><code>502 video_status_unavailable</code>、<code>503 provider_unavailable</code></td><td>查询按退避策略重试。有任务 ID 时查已有任务。服务未配置时联系运营核对。</td></tr>

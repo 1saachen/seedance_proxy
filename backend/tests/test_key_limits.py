@@ -1,5 +1,5 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import UTC, datetime
 from threading import Event
 
@@ -17,6 +17,10 @@ MODELS = "/v1/models"
 KEYS = "/api/customer/keys"
 PLAYGROUND_KEY = "/api/customer/playground/key"
 PROMPT = {"model": "doubao-seedance-2.5", "content": [{"type": "text", "text": "A quiet morning"}]}
+CHAT_PATH = "/v1/chat/completions"
+IMAGE_PATH = "/v1/images/generations"
+CHAT = {"model": "doubao-seed-2.1-lite", "messages": [{"role": "user", "content": "Hello"}]}
+IMAGE = {"model": "doubao-seedream-5.5", "prompt": "Draw a quiet morning"}
 SECOND = key_limits.MICROSECONDS_PER_SECOND
 
 
@@ -92,7 +96,8 @@ def test_rpm_is_rolling_and_counts_only_one_admission_per_business_request(tmp_p
         assert created.status_code == 200
         assert calls == ["POST"]
         assert _metrics(client, project)[owner_id] == {
-            "concurrencyLimit": None, "rpmLimit": 2, "activeTasks": 1, "requestsLastMinute": 2,
+            "concurrencyLimit": None, "rpmLimit": 2, "activeTasks": 1, "activeTextRequests": 0,
+            "activeImageRequests": 0, "activeConcurrentRequests": 1, "requestsLastMinute": 2,
         }
         assert client.get("/api/asset-group/list", headers=other).status_code == 200
         assert _metrics(client, project)[other_id]["requestsLastMinute"] == 1
@@ -241,3 +246,118 @@ def test_unknown_concurrency_slot_expires_without_replay_and_queued_slot_remains
         assert _metrics(client, project)[key_id]["activeTasks"] == 1
         _assert_limited(client.post(TASKS_PATH, headers=headers, json=PROMPT), "key_concurrency_exceeded")
         assert calls == ["POST"] * 3
+
+
+def test_shared_concurrency_counts_image_and_video_and_replays_without_a_slot(tmp_path):
+    waiting_for_image = Event()
+    release_image = Event()
+    calls = {"image": 0, "video": 0, "text": 0}
+
+    async def upstream(request):
+        if request.url.path.endswith(IMAGE_PATH.removeprefix("/v1")):
+            calls["image"] += 1
+            waiting_for_image.set()
+            assert await asyncio.to_thread(release_image.wait, 10)
+            return httpx.Response(200, json={"data": [{"url": "https://example.com/image.png"}]})
+        if request.url.path == TASKS_PATH:
+            calls["video"] += 1
+            return httpx.Response(200, json={"id": f"provider-video-{calls['video']}"})
+        assert request.url.path.endswith(CHAT_PATH.removeprefix("/v1"))
+        calls["text"] += 1
+        return httpx.Response(200, json={
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}}],
+        })
+
+    with _client(tmp_path, upstream) as client:
+        project, csrf = _customer(client)
+        key_id, headers = _new_key(client, csrf)
+        _, other = _new_key(client, csrf)
+        _limits(client, key_id, concurrency=2)
+        image_headers = {**headers, "Idempotency-Key": "shared-image"}
+        with ThreadPoolExecutor(max_workers=1) as workers:
+            image = workers.submit(client.post, IMAGE_PATH, headers=image_headers, json=IMAGE)
+            try:
+                assert waiting_for_image.wait(10)
+                assert client.post(TASKS_PATH, headers=headers, json=PROMPT).status_code == 200
+                assert _metrics(client, project)[key_id] == {
+                    "concurrencyLimit": 2, "rpmLimit": None, "activeTasks": 1, "activeTextRequests": 0,
+                    "activeImageRequests": 1, "activeConcurrentRequests": 2, "requestsLastMinute": 2,
+                }
+                for path, payload in ((CHAT_PATH, CHAT), (IMAGE_PATH, IMAGE), (TASKS_PATH, PROMPT)):
+                    _assert_limited(client.post(path, headers=headers, json=payload), "key_concurrency_exceeded")
+                replay = client.post(IMAGE_PATH, headers=image_headers, json=IMAGE)
+                assert replay.status_code == 409 and replay.json()["detail"]["code"] == "image_request_pending"
+                assert client.post(CHAT_PATH, headers=other, json=CHAT).status_code == 200
+            finally:
+                release_image.set()
+            completed = image.result(timeout=10)
+        assert completed.status_code == 200
+        assert _metrics(client, project)[key_id]["activeConcurrentRequests"] == 1
+        assert client.post(CHAT_PATH, headers=headers, json=CHAT).status_code == 200
+        assert client.post(TASKS_PATH, headers=headers, json=PROMPT).status_code == 200
+        assert client.post(IMAGE_PATH, headers=image_headers, json=IMAGE).json() == completed.json()
+        assert calls == {"image": 1, "video": 2, "text": 2}
+        with client.app.state.db.connect() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM general_model_calls WHERE key_id = ?", (key_id,)).fetchone()[0] == 2
+
+
+def test_shared_concurrency_serializes_new_chat_and_video_across_app_instances(tmp_path):
+    entered = Event()
+    release = Event()
+    calls = []
+
+    async def upstream(request):
+        calls.append(request.url.path)
+        entered.set()
+        assert await asyncio.to_thread(release.wait, 10)
+        if request.url.path == TASKS_PATH:
+            return httpx.Response(200, json={"id": "provider-video"})
+        return httpx.Response(200, json={
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "Hi"}}],
+        })
+
+    with _client(tmp_path, upstream) as client, _client(tmp_path, upstream) as other:
+        project, csrf = _customer(client)
+        key_id, headers = _new_key(client, csrf)
+        _limits(client, key_id, concurrency=1)
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            chat = workers.submit(client.post, CHAT_PATH, headers=headers, json=CHAT)
+            video = workers.submit(other.post, TASKS_PATH, headers=headers, json=PROMPT)
+            try:
+                assert entered.wait(10)
+                done, pending = wait((chat, video), timeout=5, return_when=FIRST_COMPLETED)
+                assert len(done) == len(pending) == 1
+                _assert_limited(done.pop().result(), "key_concurrency_exceeded")
+                assert _metrics(client, project)[key_id]["activeConcurrentRequests"] == 1
+            finally:
+                release.set()
+            assert pending.pop().result(timeout=10).status_code == 200
+        assert len(calls) == 1
+
+
+def test_abandoned_general_reservation_expires_without_a_new_general_request(tmp_path, monkeypatch):
+    created = int(datetime.now(UTC).timestamp())
+    now = [created * SECOND]
+    monkeypatch.setattr(key_limits, "_now_us", lambda: now[0])
+
+    def upstream(request):
+        assert request.url.path == TASKS_PATH
+        return httpx.Response(200, json={"id": "provider-after-general-deadline"})
+
+    with _client(tmp_path, upstream) as client:
+        project, csrf = _customer(client)
+        key_id, headers = _new_key(client, csrf)
+        _limits(client, key_id, concurrency=1)
+        with client.app.state.db.connect() as connection:
+            connection.execute("""
+                INSERT INTO general_model_calls (id, project_id, key_id, modality, model, upstream_model, status, created_at)
+                VALUES ('old-general', ?, ?, 'image', 'fixture', 'fixture', 'in_progress', ?)
+            """, (project, key_id, created))
+        lease_seconds = created - key_limits.general_request_cutoff(created)
+        now[0] += lease_seconds * SECOND - 1
+        assert _metrics(client, project)[key_id]["activeImageRequests"] == 1
+        _assert_limited(client.post(TASKS_PATH, headers=headers, json=PROMPT), "key_concurrency_exceeded")
+        now[0] += 1
+        assert _metrics(client, project)[key_id]["activeConcurrentRequests"] == 0
+        assert client.post(TASKS_PATH, headers=headers, json=PROMPT).status_code == 200
+        assert _metrics(client, project)[key_id]["activeTasks"] == 1

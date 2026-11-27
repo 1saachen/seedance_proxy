@@ -46,7 +46,10 @@ test('changed statement amount is surfaced without replaying the confirmation', 
 });
 
 test('admin Key limit updates send both limits to the scoped path with CSRF', async (t) => {
-  const updated = { id: 'k_fixture', concurrencyLimit: null, rpmLimit: 45, activeTasks: 3, requestsLastMinute: 11 };
+  const updated = {
+    id: 'k_fixture', concurrencyLimit: null, rpmLimit: 45, requestsLastMinute: 11,
+    activeTasks: 3, activeTextRequests: 2, activeImageRequests: 1, activeConcurrentRequests: 6,
+  };
   const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json(updated));
 
   assert.deepEqual(await adminApi.updateKeyLimits('p/fixture', 'k/fixture', {

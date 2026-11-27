@@ -424,6 +424,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+.admin-key-table .admin-key-breakdown {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.admin-key-limit-note {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
 .admin-key-name {
   overflow-wrap: anywhere;
 }

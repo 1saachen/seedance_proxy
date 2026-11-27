@@ -74,7 +74,8 @@ function KeyLimitsDialog({ projectId, apiKey, csrfToken, onExpired, onClose, onS
     <Dialog title="调整业务 Key 限额" onClose={onClose} busy={mutation.busy}>
       <form className="admin-form" onSubmit={save}>
         <p className="admin-key-name">{apiKey.name} <code>{apiKey.prefix}</code></p>
-        <KeyLimitField label="并发任务上限" name="concurrencyLimit" limit={apiKey.concurrencyLimit} max={1000} />
+        <p className="admin-key-limit-note">文本、图片和视频共用同一个并发上限。</p>
+        <KeyLimitField label="共享并发上限" name="concurrencyLimit" limit={apiKey.concurrencyLimit} max={1000} />
         <KeyLimitField label="每分钟请求上限（RPM）" name="rpmLimit" limit={apiKey.rpmLimit} max={60000} />
         <Message error={mutation.error} />
         <div className="admin-form-actions">
@@ -88,6 +89,19 @@ function KeyLimitsDialog({ projectId, apiKey, csrfToken, onExpired, onClose, onS
 
 function keyUsage(count, limit) {
   return formatNumber(count) + ' / ' + (limit == null ? '不限' : formatNumber(limit));
+}
+
+function KeyConcurrency({ apiKey }) {
+  return (
+    <td className="admin-key-usage">
+      <strong>{keyUsage(apiKey.activeConcurrentRequests, apiKey.concurrencyLimit)}</strong>
+      <small className="admin-key-breakdown">
+        <span>文本 {formatNumber(apiKey.activeTextRequests)}</span>
+        <span>图片 {formatNumber(apiKey.activeImageRequests)}</span>
+        <span>视频 {formatNumber(apiKey.activeTasks)}</span>
+      </small>
+    </td>
+  );
 }
 
 function ProjectKeys({ projectId, onExpired, csrfToken }) {
@@ -120,7 +134,7 @@ function ProjectKeys({ projectId, onExpired, csrfToken }) {
       <div className="admin-toolbar">
         <div>
           <h3>业务 Key</h3>
-          <p>并发统计排队、运行及提交待确认等视频任务。RPM 统计近 60 秒内通过 Key 限流检查的业务 API 请求。</p>
+          <p>进行中的文本请求、图片生成和视频任务共享并发额度。RPM 统计近 60 秒内通过 Key 限流检查的业务 API 请求。</p>
         </div>
         <button type="button" className="button secondary" disabled={!resource.data || refresh.busy} onClick={refreshKeys}>
           {refresh.busy ? '正在刷新…' : '刷新用量'}
@@ -129,13 +143,13 @@ function ProjectKeys({ projectId, onExpired, csrfToken }) {
       <Message error={refresh.error} notice={notice} />
       <LoadState resource={resource}>{({ keys }) => (
         <DataTable label="项目业务 Key" tableClass="admin-key-table"
-          headings={['名称 / 前缀', '状态', '视频并发', '最近 60 秒请求', '创建时间', '操作']}
+          headings={['名称 / 前缀', '状态', '共享并发', '最近 60 秒请求', '创建时间', '操作']}
           empty="该项目还未创建业务 Key。">
           {(snapshot ?? keys).map((key) => (
             <tr key={key.id}>
               <td>{key.name}<small><code>{key.prefix}</code></small></td>
               <td><Status value={key.status} /></td>
-              <td className="admin-key-usage">{keyUsage(key.activeTasks, key.concurrencyLimit)}</td>
+              <KeyConcurrency apiKey={key} />
               <td className="admin-key-usage">{keyUsage(key.requestsLastMinute, key.rpmLimit)}</td>
               <td>{formatDate(key.createdAt)}</td>
               <td>{key.status === 'active' ? (
