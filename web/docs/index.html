@@ -55,19 +55,35 @@
 
         <section id="quickstart" aria-labelledby="quickstart-title">
           <h2 id="quickstart-title">快速接入</h2>
-          <ol>
-            <li>登录<a href="/console/">客户工作台</a>，在「API 接入」创建业务 Key。完整 Key 只在创建时显示一次。把它放在服务端环境变量 <code>API_KEY</code> 中。</li>
-            <li>把部署地址设为 <code>BASE_URL</code>，使用 <code>Authorization: Bearer &lt;API_KEY&gt;</code> 发起请求。提交 JSON 时设置 <code>Content-Type: application/json</code>。</li>
-            <li>创建任务并保存响应中的 <code>id</code>。用同一业务 Key 轮询任务，成功后读取 <code>content.video_url</code>。</li>
-          </ol>
+          <p>用本地终端、Postman 等 API 调试工具，或你自己的应用发起请求。调用前先准备下面两项信息。</p>
+          <ul>
+            <li>在工作台查看 <strong>API 地址（Base URL）</strong>，调用时把接口路径拼在地址后面。</li>
+            <li>登录<a href="/console/">客户工作台</a>，在「API 接入」创建并保存<strong>业务 API Key</strong>。完整 Key 只显示一次。</li>
+          </ul>
+          <p>先发 <code>GET /v1/models</code> 确认可用模型。请求带上 <code>Authorization: Bearer &lt;API_KEY&gt;</code>，发送 JSON 时再加 <code>Content-Type: application/json</code>。第三方客户端需支持 Seedance 视频任务接口，或允许自定义 HTTP 请求。</p>
+          <details>
+            <summary>用 Postman 发送第一个请求</summary>
+            <ol>
+              <li>新建 <code>GET</code> 请求，URL 填 API 地址加 <code>/v1/models</code>。</li>
+              <li>在 Authorization 里选 Bearer Token，Token 一栏只填业务 Key，然后点击 Send。</li>
+              <li>从响应的 <code>data[].id</code> 选一个模型。创建视频时请求 <code>POST /api/v3/contents/generations/tasks</code>，在 Body 选择 raw 和 JSON，填入<a href="#examples">示例 JSON</a>，并在 Headers 设置 <code>Idempotency-Key</code>。</li>
+            </ol>
+          </details>
+          <p>以下 Bash 和 Python 示例从运行命令的终端读取 <code>BASE_URL</code> 和 <code>API_KEY</code>。请妥善保管 Key，避免把真实 Key 写进公开代码或网页前端。</p>
           <figure class="docs-example">
-            <figcaption>从模型列表到首次提交 · Shell</figcaption>
-            <pre tabindex="0"><code>export BASE_URL='https://relay.example.com' # 换成你的 richproxy 地址
-export REQUEST_ID='video-order-001'       # 每次新任务换一个，请求重试沿用原值
+            <figcaption>查看可用模型 · Bash</figcaption>
+            <pre tabindex="0"><code>export BASE_URL='https://richproxy.richbest.cn' # 使用其他实例时换成它的 API 地址
+read -rsp '业务 API Key: ' API_KEY
+printf '\n'
+export API_KEY
 
 curl -fSs "$BASE_URL/v1/models" \
-  -H "Authorization: Bearer $API_KEY"
-
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </figure>
+          <p>确认模型和参数后再提交视频任务。创建任务可能产生费用。每次新任务使用不同的 <code>Idempotency-Key</code>，网络中断重试时沿用原键和原请求体。</p>
+          <figure class="docs-example">
+            <figcaption>创建视频任务 · Bash</figcaption>
+            <pre tabindex="0"><code>export REQUEST_ID='video-order-001' # 每次新任务换一个
 curl -fSs "$BASE_URL/api/v3/contents/generations/tasks" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
@@ -80,13 +96,14 @@ curl -fSs "$BASE_URL/api/v3/contents/generations/tasks" \
     "duration": 5
   }'</code></pre>
           </figure>
+          <p>保存创建响应中的 <code>id</code>，用同一业务 Key 查询。任务成功后，从 <code>content.video_url</code> 获取视频链接。</p>
           <figure class="docs-example">
-            <figcaption>使用返回的 ID 查单 · Shell</figcaption>
+            <figcaption>使用返回的 ID 查单 · Bash</figcaption>
             <pre tabindex="0"><code>export TASK_ID='vid_REPLACE_WITH_RETURNED_ID'
 curl -fSs "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
   -H "Authorization: Bearer $API_KEY"</code></pre>
           </figure>
-          <p>业务 Key 用于视频和素材 API。项目的全部任务记录、账单和 Key 管理使用工作台登录会话。提交到真实方舟的生成任务可能产生费用。</p>
+          <p>业务 Key 用于视频和素材 API。项目的全部任务记录、账单和 Key 管理使用工作台登录会话。</p>
 
           <details>
             <summary>Python 示例 · 创建任务并有界轮询</summary>

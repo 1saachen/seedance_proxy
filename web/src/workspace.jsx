@@ -128,7 +128,7 @@ function Overview({ customer, usage, keys, month }) {
           </div>
           <ol className="onboarding-steps" role="list">
             <li>
-              <div><h3>创建项目 API Key</h3><p>为服务创建独立密钥，保存到服务端环境。</p></div>
+              <div><h3>创建项目 API Key</h3><p>创建业务 Key，供本地工具、脚本或应用调用。</p></div>
               <a className="button primary" href="#api">管理密钥</a>
             </li>
             <li>
@@ -149,7 +149,7 @@ function Overview({ customer, usage, keys, month }) {
             <div><dt>账号</dt><dd>{customer.email}</dd></div>
             <div><dt>项目 ID</dt><dd><code>{customer.projectId}</code></dd></div>
             <div><dt>可用密钥</dt><dd>{activeKeys == null ? '—' : formatNumber(activeKeys)}</dd></div>
-            <div><dt>API 基础地址</dt><dd><code>{window.location.origin}</code></dd></div>
+            <div><dt>API 地址</dt><dd><code>{window.location.origin}</code></dd></div>
           </dl>
         </section>
       </div>
@@ -176,7 +176,7 @@ function KeyReveal({ secret, onClose }) {
       <h3 tabIndex={-1} ref={title}>
         复制新建的 API Key
       </h3>
-      <p>请将它保存在服务器的密钥管理工具中。关闭后只能看到前缀。</p>
+      <p>请妥善保存这枚 Key。关闭后只能看到前缀。</p>
       <code className="secret-value">{secret}</code>
       <div className="row-actions">
         <button className="button primary" onClick={copy}>
@@ -413,16 +413,20 @@ function SetupGuide() {
         <div>
           <h2 id="integration-heading">Seedance 快速接入</h2>
           <p>
-            用本站业务 Key 设置 <code>API_KEY</code>，并为每次任务设置独立的 <code>REQUEST_ID</code>。
+            在本地终端、Postman 或应用中，用 API 地址和项目业务 Key 发起请求。
           </p>
         </div>
-        <a href="/docs/">开发者文档</a>
+        <a href="/docs/#quickstart">开发者文档</a>
       </div>
+      <p className="guide-note">
+        发送请求时使用 <code>Authorization: Bearer &lt;API_KEY&gt;</code>。下方是 Bash 示例。请先在运行命令的终端设置
+        <code>API_KEY</code> 和 <code>REQUEST_ID</code>，并先用 <code>GET /v1/models</code> 查看可用模型。
+      </p>
       <pre className="console-code" tabIndex={0}>
         <code>{example}</code>
       </pre>
       <p className="guide-note">
-        用创建响应里的任务 ID 设置 <code>TASK_ID</code>。实际可用模型以模型列表为准。
+        每次新任务设置不同的 <code>REQUEST_ID</code>，重试沿用原值和原请求体。用创建响应里的任务 ID 设置 <code>TASK_ID</code>。
       </p>
       <section className="guide-subsection" aria-labelledby="asset-guide-heading">
         <h3 id="asset-guide-heading">用本地图片作为参考</h3>

@@ -38,7 +38,7 @@ pnpm dev
 
 客户账号密码长度为 8 至 128 个字符。客户登录后可领取或撤销站内业务 Key。凭证只在创建时返回完整值。调用下列接口使用 `Authorization: Bearer <业务 Key>`。
 
-完整参数、请求示例、错误处理和回调验签见[开发者手册](web/docs/index.html)。
+在本地终端、Postman 或应用中填写实例的 API 地址和业务 Key。建议先调用模型列表，确认地址、Key 和可用模型。完整参数、请求示例、错误处理和回调验签见[开发者手册](web/docs/index.html#quickstart)。
 
 | 能力 | 接口 |
 | --- | --- |
