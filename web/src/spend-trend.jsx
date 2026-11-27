@@ -35,7 +35,7 @@ function SpendDay({ day, limit }) {
   const breakdown = models.map(({ model, amount: modelAmount }) => `${model} ${yuan(modelAmount)}`);
   const details = [date, amountLabel, countLabel, ...breakdown].join('，');
   return (
-    <a className="spend-day" href={`#billing?day=${date}`} aria-label={`${details}。查看调用明细`}>
+    <a className="spend-day" href={`#billing?day=${date}`} aria-label={`${details}。查看调用记录`}>
       <span className="spend-track" aria-hidden="true">
         {limit > 0 &&
           models.map(
@@ -111,7 +111,7 @@ export function SpendTrend({ trend }) {
             ))}
           </ul>
         )}
-        <p>{pendingCalls > 0 && `${formatNumber(pendingCalls)} 笔待计价 · `}选择日期查看调用明细</p>
+        <p>{pendingCalls > 0 && `${formatNumber(pendingCalls)} 笔待计价 · `}选择日期查看调用记录</p>
       </div>
     </div>
   );

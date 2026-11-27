@@ -22,7 +22,7 @@ const navigation = [
     label: '记录',
     items: [
       { id: 'tasks', label: '视频任务', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的视频记录。', seedanceOnly: true },
-      { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和调用用量。' },
+      { id: 'billing', label: '用量与账单', mark: '≋' },
     ],
   },
 ];
@@ -126,7 +126,7 @@ function Overview({ customer, keys, month, onExpired }) {
             <h2 id="month-heading">本月用量</h2>
             <p><time dateTime={month}>{month}</time>（北京时间）</p>
           </div>
-          <a href="#billing?usage=1">查看用量明细</a>
+          <a href="#billing?usage=1">查看调用记录</a>
         </div>
         <LoadState state={usage}>{({ summary }) => <UsageSummary summary={summary} />}</LoadState>
       </section>
@@ -157,8 +157,8 @@ function Overview({ customer, keys, month, onExpired }) {
               <a className="button secondary" href="#models">进入模型体验</a>
             </li>
             <li>
-              <div><h3>查询调用用量</h3><p>按月查看项目的调用记录和计量数据。</p></div>
-              <a className="button secondary" href="#billing?usage=1">查看用量</a>
+              <div><h3>查询调用用量</h3><p>按日期、模型或业务 Key 查询项目用量。</p></div>
+              <a className="button secondary" href="#billing?usage=1">查看调用记录</a>
             </li>
           </ol>
         </section>
@@ -432,141 +432,138 @@ function SetupGuide() {
   );
 }
 
-function DetailToggle({ children, open, controls, buttonRef, onToggle }) {
-  return (
-    <button className="usage-disclosure" type="button" ref={buttonRef} aria-expanded={open}
-      aria-controls={controls} onClick={onToggle}>
-      <span>{children}</span>
-      <span aria-hidden="true">{open ? '收起' : '展开'} <span className="usage-chevron">⌄</span></span>
-    </button>
-  );
-}
-
-function MonthlyStatement({ month, current, onExpired }) {
+function MonthlyStatement({ month, active, onExpired }) {
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(false);
-  const summaryRef = useRef(null);
+  const [previous, setPrevious] = useState(null);
+  const linesRef = useRef(null);
   const load = useCallback((signal) => customerApi.billing(month, page, signal), [month, page]);
-  const statement = useRemote(load, onExpired);
+  const statement = useRemote(load, onExpired, active);
+  const bill = statement.data ?? previous;
+
+  useEffect(() => {
+    if (statement.data) setPrevious(statement.data);
+  }, [statement.data]);
 
   function goToPage(next) {
     setPage(next);
-    summaryRef.current?.focus();
+    linesRef.current?.focus();
   }
 
+  if (!bill) return <LoadState state={statement}>{() => null}</LoadState>;
+
+  const { id, status, confirmedAt, summary } = bill;
+  const confirmed = status === 'confirmed';
+  const csv = confirmed ? customerApi.billingExportUrl(id) : null;
   return (
-    <div ref={summaryRef} tabIndex={-1} role="group" aria-label="月度账单明细">
-      <LoadState state={statement}>
-        {({ id, status, confirmedAt, summary, pagination, items }) => {
-          const confirmed = status === 'confirmed';
-          const csv = confirmed ? customerApi.billingExportUrl(id) : null;
-          const lastPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
-          return (
-            <>
-              <div className="statement-overview">
-                <dl className="statement-totals">
-                  <div className="statement-payable">
-                    <dt>{confirmed ? '已确认应付' : current ? '本月预估应付' : '往期预估应付'}</dt>
-                    <dd>¥{summary.payableAmount}</dd>
-                  </div>
-                  <div>
-                    <dt>本期计价任务</dt>
-                    <dd>{formatNumber(summary.usageCalls)}</dd>
-                  </div>
-                  {summary.lateCalls > 0 && (
-                    <div>
-                      <dt>补计任务</dt>
-                      <dd>{formatNumber(summary.lateCalls)}</dd>
-                    </div>
-                  )}
-                  {summary.pendingCalls > 0 && (
-                    <div>
-                      <dt>{confirmed ? '确认时待计价' : '待计价任务'}</dt>
-                      <dd>{formatNumber(summary.pendingCalls)}</dd>
-                    </div>
-                  )}
-                </dl>
-                {csv && (
-                  <a className="button secondary" href={csv} download>
-                    下载 CSV
-                  </a>
-                )}
-              </div>
-              <p className="statement-note">
-                {confirmed ? `${formatDate(confirmedAt)} 确认，金额已固定。` : '待计价任务补齐用量和价目后计入账单。'}
-              </p>
-              <h3 className="statement-disclosure">
-                <DetailToggle open={open} controls="statement-details-content" onToggle={() => setOpen((value) => !value)}>
-                  账单计价明细
-                </DetailToggle>
-              </h3>
-              <div id="statement-details-content" hidden={!open}>
-                {items.length === 0 ? (
-                  <p className="empty">该账期暂无已计价明细。</p>
-                ) : (
-                  <div className="table-scroll statement-details" tabIndex={0} role="region" aria-label="账单计价明细">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th scope="col">任务 ID / 模型</th>
-                          <th scope="col">折后（元）</th>
-                          <th scope="col">来源账期 / 结束时间</th>
-                          <th scope="col">输出 Token</th>
-                          <th scope="col">单价（元／百万 Token）</th>
-                          <th scope="col">折前（元）</th>
-                          <th scope="col">应付比例</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((item) => (
-                          <tr key={item.taskId}>
-                            <th scope="row">
-                              <code>{item.taskId}</code>
-                              <small className="statement-line-note">{item.model}</small>
-                            </th>
-                            <td>{item.amount ?? '—'}</td>
-                            <td>
-                              {item.sourceMonth}{item.kind === 'late_usage' && ' · 补计'}
-                              <small className="statement-line-note">{formatDate(item.settledAt)}</small>
-                            </td>
-                            <td>{formatNumber(item.outputTokens)}</td>
-                            <td>{item.unitPrice ?? '—'}</td>
-                            <td>{item.listAmount ?? '—'}</td>
-                            <td>{item.payableBps == null ? '—' : `${item.payableBps / 100}%`}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {(page > 1 || lastPage > 1) && (
-                  <nav className="statement-pages" aria-label="账单明细分页">
-                    <button type="button" className="button secondary" disabled={page <= 1} onClick={() => goToPage(Math.min(page - 1, lastPage))}>
-                      上一页
-                    </button>
-                    <span role="status">第 {pagination.page} 页 / 共 {lastPage} 页</span>
-                    <button type="button" className="button secondary" disabled={page >= lastPage} onClick={() => goToPage(page + 1)}>
-                      下一页
-                    </button>
-                  </nav>
-                )}
-              </div>
-            </>
-          );
-        }}
-      </LoadState>
-    </div>
+    <>
+      <div className="statement-overview">
+        <dl className="statement-totals">
+          <div className="statement-payable">
+            <dt>{confirmed ? '已确认应付' : '预估应付'}</dt>
+            <dd>¥{summary.payableAmount}</dd>
+          </div>
+          <div>
+            <dt>本期计价任务</dt>
+            <dd>{formatNumber(summary.usageCalls)}</dd>
+          </div>
+          {summary.lateCalls > 0 && (
+            <div>
+              <dt>补计任务</dt>
+              <dd>{formatNumber(summary.lateCalls)}</dd>
+            </div>
+          )}
+          {summary.pendingCalls > 0 && (
+            <div>
+              <dt>{confirmed ? '确认时待计价' : '待计价任务'}</dt>
+              <dd>{formatNumber(summary.pendingCalls)}</dd>
+            </div>
+          )}
+        </dl>
+        {csv && <a className="button secondary" href={csv} download>下载账单 CSV</a>}
+      </div>
+      <p className="statement-note">
+        {confirmed ? `${formatDate(confirmedAt)} 确认。` : '账单确认后可下载。'}
+      </p>
+      {!open && statement.error && <LoadState state={statement}>{() => null}</LoadState>}
+      <div className="statement-disclosure">
+        <button className="usage-disclosure" type="button" aria-expanded={open}
+          aria-controls="statement-details-content" onClick={() => setOpen((value) => !value)}>
+          {open ? '收起账单明细' : '查看账单明细'} <span className="usage-chevron" aria-hidden="true">⌄</span>
+        </button>
+      </div>
+      <div id="statement-details-content" className="billing-results" ref={linesRef} tabIndex={-1}
+        role="group" aria-label="账单明细结果" hidden={!open}>
+        {open && <LoadState state={statement}>{(data) => <StatementLines data={data} onPage={goToPage} />}</LoadState>}
+      </div>
+    </>
+  );
+}
+
+function StatementLines({ data: { items, pagination }, onPage }) {
+  const { page, pageSize, total } = pagination;
+  const lastPage = Math.max(1, Math.ceil(total / pageSize));
+  return (
+    <>
+      {items.length === 0 ? (
+        <p className="empty">该账期暂无已计价明细。</p>
+      ) : (
+        <div className="table-scroll statement-details" tabIndex={0} role="region" aria-label="账单明细">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">任务 ID / 模型</th>
+                <th scope="col">折后（元）</th>
+                <th scope="col">来源账期 / 结束时间</th>
+                <th scope="col">输出 Token</th>
+                <th scope="col">单价（元／百万 Token）</th>
+                <th scope="col">折前（元）</th>
+                <th scope="col">应付比例</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <tr key={item.taskId}>
+                  <th scope="row">
+                    <code>{item.taskId}</code>
+                    <small className="statement-line-note">{item.model}</small>
+                  </th>
+                  <td>{item.amount ?? '—'}</td>
+                  <td>
+                    {item.sourceMonth}{item.kind === 'late_usage' && ' · 补计'}
+                    <small className="statement-line-note">{formatDate(item.settledAt)}</small>
+                  </td>
+                  <td>{formatNumber(item.outputTokens)}</td>
+                  <td>{item.unitPrice ?? '—'}</td>
+                  <td>{item.listAmount ?? '—'}</td>
+                  <td>{item.payableBps == null ? '—' : `${item.payableBps / 100}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {(page > 1 || lastPage > 1) && (
+        <nav className="statement-pages" aria-label="账单明细分页">
+          <button type="button" className="button secondary" disabled={page <= 1} onClick={() => onPage(Math.min(page - 1, lastPage))}>
+            上一页
+          </button>
+          <span role="status">第 {page} 页 / 共 {lastPage} 页</span>
+          <button type="button" className="button secondary" disabled={page >= lastPage} onClick={() => onPage(page + 1)}>
+            下一页
+          </button>
+        </nav>
+      )}
+    </>
   );
 }
 
 const reportKinds = { video: '视频', text: '文本', image: '图片' };
 
-function reportDates(month, day) {
+function reportDates(day) {
   if (day) return { from: day, to: day };
   const today = currentDay();
-  const [year, number] = month.split('-').map(Number);
-  const lastDay = new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10);
-  return { from: month + '-01', to: month === today.slice(0, 7) ? today : lastDay };
+  return { from: today.slice(0, 7) + '-01', to: today };
 }
 
 function reportAmount(amount, status) {
@@ -584,7 +581,7 @@ function UsageReportResults({ data, onPage }) {
     ['输入 Token', formatNumber(summary.promptTokens)],
     ['输出 Token', formatNumber(summary.outputTokens)],
     ['生成图片', formatNumber(summary.generatedImages)],
-    ['折后金额', reportAmount(summary.amount)],
+    ['已计价金额', reportAmount(summary.amount)],
   ];
   return (
     <>
@@ -595,7 +592,7 @@ function UsageReportResults({ data, onPage }) {
         <p className="usage-report-note">其中 {formatNumber(summary.pendingCalls)} 笔待计价。</p>
       )}
       {items.length ? (
-        <div className="table-scroll usage-report-table" tabIndex={0} role="region" aria-label="用量明细表">
+        <div className="table-scroll usage-report-table" tabIndex={0} role="region" aria-label="调用记录表">
           <table>
             <thead>
               <tr>
@@ -630,7 +627,7 @@ function UsageReportResults({ data, onPage }) {
         </div>
       ) : <p className="empty">所选范围暂无调用记录。</p>}
       {(page > 1 || lastPage > 1) && (
-        <nav className="statement-pages" aria-label="用量明细分页">
+        <nav className="statement-pages" aria-label="调用记录分页">
           <button type="button" className="button secondary" disabled={page <= 1}
             onClick={() => onPage(Math.min(page - 1, lastPage))}>上一页</button>
           <span role="status">第 {page} 页 / 共 {lastPage} 页</span>
@@ -642,16 +639,17 @@ function UsageReportResults({ data, onPage }) {
   );
 }
 
-function UsageReport({ month, day, open, onClearDay, onExpired, title }) {
-  const [draft, setDraft] = useState(() => ({ keyId: '', model: '', ...reportDates(month, day) }));
+function UsageReport({ day, active, onClearDay, onExpired }) {
+  const [draft, setDraft] = useState(() => ({ keyId: '', model: '', ...reportDates(day) }));
   const [applied, setApplied] = useState(draft);
   const [page, setPage] = useState(1);
   const [choices, setChoices] = useState(null);
   const [exportError, setExportError] = useState('');
   const [exporting, setExporting] = useState(false);
+  const resultsRef = useRef(null);
   const exportRequest = useRef(null);
   const load = useCallback((signal) => customerApi.usageReport(applied, page, signal), [applied, page]);
-  const usage = useRemote(load, onExpired, open);
+  const usage = useRemote(load, onExpired, active);
   const dirty = Object.keys(applied).some((field) => applied[field] !== draft[field]);
 
   useEffect(() => {
@@ -726,81 +724,70 @@ function UsageReport({ month, day, open, onClearDay, onExpired, title }) {
         </label>
         <div className="usage-report-actions">
           <button className="button primary" type="submit">筛选</button>
-          {day && <button className="button secondary" type="button" onClick={onClearDay}>清除日期</button>}
+          {day && <button className="button secondary" type="button" onClick={onClearDay}>回到本月</button>}
           <button className="button secondary" type="button" onClick={download} disabled={dirty || !usage.data || exporting}>
-            {exporting ? '正在导出…' : '导出筛选结果 CSV'}
+            {exporting ? '正在导出…' : '导出调用记录 CSV'}
           </button>
         </div>
       </form>
       {exportError && <p className="message error panel-message" role="alert">{exportError}</p>}
-      <LoadState state={usage}>{(data) => <UsageReportResults data={data} onPage={(next) => {
-        setPage(next);
-        title.current?.focus();
-      }} />}</LoadState>
+      <div className="billing-results" ref={resultsRef} tabIndex={-1} role="group" aria-label="调用记录查询结果">
+        <LoadState state={usage}>{(data) => <UsageReportResults data={data} onPage={(next) => {
+          setPage(next);
+          resultsRef.current?.focus();
+        }} />}</LoadState>
+      </div>
     </>
   );
 }
 
-function UsageDetails({ month, day, showUsage, onClearDay, onExpired }) {
-  const [open, setOpen] = useState(showUsage);
-  const title = useRef(null);
+function Billing({ month, setMonth, maxMonth, day, showUsage, onClearDay, onExpired }) {
+  const [lastUsageDay, setLastUsageDay] = useState(day);
+  const usageBasis = useRef(null);
+  const usageDay = showUsage ? day : lastUsageDay;
   useEffect(() => {
     if (showUsage) {
-      setOpen(true);
-      title.current?.focus();
+      setLastUsageDay(day);
+      usageBasis.current?.focus();
     }
   }, [day, showUsage]);
 
   return (
-    <section className="panel usage-report" aria-labelledby="usage-heading">
-      <h2 id="usage-heading">
-        <DetailToggle open={open} controls="usage-report-content" buttonRef={title}
-          onToggle={() => setOpen((expanded) => !expanded)}>用量明细</DetailToggle>
-      </h2>
-      <div id="usage-report-content" hidden={!open}>
-        <p className="usage-report-note">按北京时间的创建日期筛选项目真实调用，包含首尾日期。缺少计量的字段显示为「—」。</p>
-        <UsageReport key={day ?? month} month={month} day={day} open={open} onClearDay={onClearDay}
-          onExpired={onExpired} title={title} />
-      </div>
-    </section>
-  );
-}
-
-function Billing({ month, setMonth, maxMonth, day, showUsage, onClearDay, onExpired }) {
-  const statement = (
-    <section className="panel" aria-labelledby="billing-heading" key="statement">
-      <div className="panel-head">
-        <div>
-          <h2 id="billing-heading">月度账单</h2>
-          <p>按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。</p>
+    <section className="panel billing-workspace" aria-label="项目用量与账单">
+      <nav className="billing-views" aria-label="用量与账单视图">
+        <a id="billing-statement-link" href="#billing" aria-current={showUsage ? undefined : 'page'}>月度账单</a>
+        <a id="billing-usage-link" href={usageDay ? `#billing?day=${usageDay}` : '#billing?usage=1'}
+          aria-current={showUsage ? 'page' : undefined}>
+          调用记录
+        </a>
+      </nav>
+      <section className="billing-view" aria-labelledby="billing-statement-link" hidden={showUsage}>
+        <div className="panel-head billing-view-head">
+          <p>按任务结束时间归入账期（北京时间）。</p>
+          <label className="month-filter">
+            账期
+            <input
+              type="month"
+              value={month}
+              min="2000-01"
+              max={maxMonth}
+              onChange={(event) => {
+                if (event.target.validity.valid && event.target.value) setMonth(event.target.value);
+              }}
+            />
+          </label>
         </div>
-        <label className="month-filter">
-          月份
-          <input
-            type="month"
-            value={month}
-            min="2000-01"
-            max={maxMonth}
-            onChange={(event) => {
-              if (event.target.validity.valid && event.target.value) setMonth(event.target.value);
-            }}
-          />
-        </label>
-      </div>
-      <MonthlyStatement key={month} month={month} current={month === maxMonth} onExpired={onExpired} />
+        <MonthlyStatement key={month} month={month} active={!showUsage} onExpired={onExpired} />
+      </section>
+      <section className="billing-view" aria-labelledby="billing-usage-link" hidden={!showUsage}>
+        <div className="panel-head billing-view-head">
+          <p id="usage-basis" ref={usageBasis} tabIndex={-1}>按调用创建日期查询（北京时间）。</p>
+        </div>
+        <UsageReport key={usageDay ?? maxMonth} day={usageDay} active={showUsage}
+          onClearDay={onClearDay} onExpired={onExpired} />
+      </section>
     </section>
   );
-  const usage = (
-    <UsageDetails
-      key="usage"
-      month={day?.slice(0, 7) ?? month}
-      day={day}
-      showUsage={showUsage}
-      onClearDay={onClearDay}
-      onExpired={onExpired}
-    />
-  );
-  return showUsage ? [usage, statement] : [statement, usage];
 }
 
 export function Workspace({ session, onSessionEnded }) {
@@ -828,11 +815,6 @@ export function Workspace({ session, onSessionEnded }) {
     if (!day) return;
     window.history.replaceState(window.history.state, '', '#billing?usage=1');
     setRoute(readRoute());
-  }
-
-  function changeBillingMonth(next) {
-    setMonth(next);
-    clearBillingDay();
   }
 
   async function logout() {
@@ -896,7 +878,7 @@ export function Workspace({ session, onSessionEnded }) {
       <main id="workspace-content" className="workspace-main" tabIndex={-1}>
         <div className="page-heading">
           <h1>{section.label}</h1>
-          <p>{section.description}</p>
+          {section.description && <p>{section.description}</p>}
         </div>
         {error && (
           <p className="message error" role="alert">
@@ -927,7 +909,7 @@ export function Workspace({ session, onSessionEnded }) {
           </Suspense>
         )}
         {section.id === 'billing' && (
-          <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} showUsage={showUsage}
+          <Billing month={month} setMonth={setMonth} maxMonth={maxMonth} day={day} showUsage={showUsage}
             onClearDay={clearBillingDay} onExpired={onSessionEnded} />
         )}
       </main>
