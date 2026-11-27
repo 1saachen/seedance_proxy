@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { customerApi, requestErrorMessage } from './api.js';
 import { Playground } from './playground.jsx';
+import { SpendTrend } from './spend-trend.jsx';
 import { TaskRecords } from './task-records.jsx';
 import { formatDate, formatNumber, Status } from './workbench-format.jsx';
 import { Wordmark } from './wordmark.jsx';
@@ -40,9 +41,15 @@ function currentMonth() {
   return `${year}-${month}`;
 }
 
-function readSection() {
-  const id = window.location.hash.slice(1);
-  return sections.find((section) => section.id === id) ?? sections[0];
+function readRoute() {
+  const [id, query] = window.location.hash.slice(1).split('?');
+  const section = sections.find((item) => item.id === id) ?? sections[0];
+  const day = section.id === 'billing' ? new URLSearchParams(query).get('day') : null;
+  if (/^2\d{3}-\d{2}-\d{2}$/.test(day ?? '')) {
+    const date = new Date(`${day}T00:00:00Z`);
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day) return { section, day };
+  }
+  return { section, day: null };
 }
 
 function useRemote(load, onExpired) {
@@ -104,8 +111,10 @@ function UsageSummary({ summary }) {
   );
 }
 
-function Overview({ customer, usage, keys, month }) {
+function Overview({ customer, keys, month, onExpired }) {
   const activeKeys = keys.data?.keys.filter((key) => key.status === 'active').length;
+  const load = useCallback((signal) => customerApi.usage(month, signal, { includeTrend: true, pageSize: 1 }), [month]);
+  const usage = useRemote(load, onExpired);
   return (
     <>
       <section className="panel overview-usage" aria-labelledby="month-heading">
@@ -117,6 +126,15 @@ function Overview({ customer, usage, keys, month }) {
           <a href="#billing">查看用量明细</a>
         </div>
         <LoadState state={usage}>{({ summary }) => <UsageSummary summary={summary} />}</LoadState>
+      </section>
+      <section className="panel spend-panel" aria-labelledby="spend-heading">
+        <div className="panel-head">
+          <div>
+            <h2 id="spend-heading">近 7 日折后费用</h2>
+            <p>按北京时间的任务创建日期归集，包含当日。</p>
+          </div>
+        </div>
+        <LoadState state={usage}>{({ spendTrend }) => <SpendTrend trend={spendTrend} />}</LoadState>
       </section>
       <div className="overview-layout">
         <section className="panel" aria-labelledby="overview-heading">
@@ -565,105 +583,183 @@ function MonthlyStatement({ month, current, onExpired }) {
   );
 }
 
-function Billing({ month, setMonth, maxMonth, usage, onExpired }) {
+function UsageRows({ month, day, onExpired, title }) {
+  const [page, setPage] = useState(1);
+  const load = useCallback(
+    (signal) => customerApi.usage(month, signal, { day, page, pageSize: 50 }),
+    [month, day, page],
+  );
+  const usage = useRemote(load, onExpired);
+
+  function goToPage(next) {
+    setPage(next);
+    title.current?.focus();
+  }
+
   return (
-    <>
-      <section className="panel" aria-labelledby="billing-heading">
-        <div className="panel-head">
-          <div>
-            <h2 id="billing-heading">月度账单</h2>
-            <p>按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。</p>
-          </div>
-          <label className="month-filter">
-            月份
-            <input
-              type="month"
-              value={month}
-              min="2000-01"
-              max={maxMonth}
-              onChange={(event) => {
-                if (event.target.validity.valid && event.target.value) setMonth(event.target.value);
-              }}
-            />
-          </label>
-        </div>
-        <MonthlyStatement key={month} month={month} current={month === maxMonth} onExpired={onExpired} />
-      </section>
-      <section className="panel" aria-labelledby="usage-heading">
-        <div className="panel-head">
-          <div>
-            <h2 id="usage-heading">用量明细</h2>
-            <p>
-              按北京时间的任务创建月份归集，最多显示最近 100 条任务。
-              缺少供应商用量的记录显示为「—」。视频调用受项目每日上限约束。
-            </p>
-          </div>
-        </div>
-        <LoadState state={usage}>
-          {({ summary, items }) => (
-            <>
-              <UsageSummary summary={summary} />
-              {items.length === 0 ? (
-                <p className="empty">这个月还没有调用记录。</p>
-              ) : (
-                <div className="table-scroll" tabIndex={0} role="region" aria-label="用量明细表">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th scope="col">任务 ID</th>
-                        <th scope="col">模型</th>
-                        <th scope="col">状态</th>
-                        <th scope="col">输出 Token</th>
-                        <th scope="col">单次金额（元）</th>
-                        <th scope="col">创建时间</th>
-                        <th scope="col">任务结束时间</th>
+    <LoadState state={usage}>
+      {({ summary, items, page: responsePage, pageSize }) => {
+        const lastPage = Math.max(1, Math.ceil(summary.calls / pageSize));
+        return (
+          <>
+            <UsageSummary summary={summary} />
+            {items.length === 0 ? (
+              <p className="empty">{day ? '当天没有调用记录。' : '这个月还没有调用记录。'}</p>
+            ) : (
+              <div className="table-scroll" tabIndex={0} role="region" aria-label="用量明细表">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">任务 ID</th>
+                      <th scope="col">模型</th>
+                      <th scope="col">状态</th>
+                      <th scope="col">输出 Token</th>
+                      <th scope="col">折后金额（元）</th>
+                      <th scope="col">创建时间</th>
+                      <th scope="col">任务结束时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item) => (
+                      <tr key={item.id}>
+                        <th scope="row">
+                          <code>{item.id}</code>
+                        </th>
+                        <td>{item.model}</td>
+                        <td>
+                          <Status value={item.status} />
+                        </td>
+                        <td>{formatNumber(item.outputTokens)}</td>
+                        <td>{formatBillingAmount(item.billing)}</td>
+                        <td>{formatDate(item.createdAt)}</td>
+                        <td>{formatDate(item.settledAt)}</td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item) => (
-                        <tr key={item.id}>
-                          <th scope="row">
-                            <code>{item.id}</code>
-                          </th>
-                          <td>{item.model}</td>
-                          <td>
-                            <Status value={item.status} />
-                          </td>
-                          <td>{formatNumber(item.outputTokens)}</td>
-                          <td>{formatBillingAmount(item.billing)}</td>
-                          <td>{formatDate(item.createdAt)}</td>
-                          <td>{formatDate(item.settledAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </>
-          )}
-        </LoadState>
-      </section>
-    </>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {(page > 1 || lastPage > 1) && (
+              <nav className="statement-pages" aria-label="用量明细分页">
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={page <= 1}
+                  onClick={() => goToPage(page - 1)}
+                >
+                  上一页
+                </button>
+                <span role="status">
+                  第 {responsePage} 页 / 共 {lastPage} 页
+                </span>
+                <button
+                  type="button"
+                  className="button secondary"
+                  disabled={page >= lastPage}
+                  onClick={() => goToPage(page + 1)}
+                >
+                  下一页
+                </button>
+              </nav>
+            )}
+          </>
+        );
+      }}
+    </LoadState>
   );
 }
 
+function UsageDetails({ month, day, onClearDay, onExpired }) {
+  const title = useRef(null);
+  useEffect(() => {
+    if (day) title.current?.focus();
+  }, [day]);
+  return (
+    <section className="panel" aria-labelledby="usage-heading">
+      <div className="panel-head">
+        <div>
+          <h2 id="usage-heading" tabIndex={-1} ref={title}>
+            用量明细
+          </h2>
+          <p>按北京时间的任务创建时间归集。缺少供应商用量的记录显示为「—」。</p>
+        </div>
+        {day && (
+          <div className="usage-day-filter">
+            <span>
+              创建日期 <time dateTime={day}>{day}</time>
+            </span>
+            <button type="button" className="button secondary" onClick={onClearDay}>
+              清除日期
+            </button>
+          </div>
+        )}
+      </div>
+      <UsageRows key={day ?? month} month={month} day={day} onExpired={onExpired} title={title} />
+    </section>
+  );
+}
+
+function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
+  const statement = (
+    <section className="panel" aria-labelledby="billing-heading" key="statement">
+      <div className="panel-head">
+        <div>
+          <h2 id="billing-heading">月度账单</h2>
+          <p>按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。</p>
+        </div>
+        <label className="month-filter">
+          月份
+          <input
+            type="month"
+            value={month}
+            min="2000-01"
+            max={maxMonth}
+            onChange={(event) => {
+              if (event.target.validity.valid && event.target.value) setMonth(event.target.value);
+            }}
+          />
+        </label>
+      </div>
+      <MonthlyStatement key={month} month={month} current={month === maxMonth} onExpired={onExpired} />
+    </section>
+  );
+  const usage = (
+    <UsageDetails
+      key="usage"
+      month={day?.slice(0, 7) ?? month}
+      day={day}
+      onClearDay={onClearDay}
+      onExpired={onExpired}
+    />
+  );
+  return day ? [usage, statement] : [statement, usage];
+}
+
 export function Workspace({ session, onSessionEnded }) {
-  const [section, setSection] = useState(readSection);
+  const [{ section, day }, setRoute] = useState(readRoute);
   const [videoKey, setVideoKey] = useState('');
   const [month, setMonth] = useState(currentMonth);
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState('');
   const maxMonth = currentMonth();
-  const displayMonth = section.id === 'billing' ? month : maxMonth;
-  const loadUsage = useCallback((signal) => customerApi.usage(displayMonth, signal), [displayMonth]);
-  const usage = useRemote(loadUsage, onSessionEnded);
   const keys = useRemote(customerApi.keys, onSessionEnded);
 
   useEffect(() => {
-    const onHashChange = () => setSection(readSection());
+    const onHashChange = () => setRoute(readRoute());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  function clearBillingDay() {
+    if (!day) return;
+    window.history.replaceState(window.history.state, '', '#billing');
+    setRoute(readRoute());
+  }
+
+  function changeBillingMonth(next) {
+    setMonth(next);
+    clearBillingDay();
+  }
 
   async function logout() {
     setError('');
@@ -732,7 +828,7 @@ export function Workspace({ session, onSessionEnded }) {
             {error}
           </p>
         )}
-        {section.id === 'overview' && <Overview usage={usage} keys={keys} month={maxMonth} customer={session.customer} />}
+        {section.id === 'overview' && <Overview keys={keys} month={maxMonth} customer={session.customer} onExpired={onSessionEnded} />}
         {section.id === 'api' && (
           <>
             <KeyPanel state={keys} csrfToken={session.csrfToken} onExpired={onSessionEnded} />
@@ -751,7 +847,7 @@ export function Workspace({ session, onSessionEnded }) {
         </div>
         {section.id === 'tasks' && <TaskRecords videoKey={videoKey} onExpired={onSessionEnded} />}
         {section.id === 'billing' && (
-          <Billing month={month} setMonth={setMonth} maxMonth={maxMonth} usage={usage} onExpired={onSessionEnded} />
+          <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} onClearDay={clearBillingDay} onExpired={onSessionEnded} />
         )}
       </main>
     </div>

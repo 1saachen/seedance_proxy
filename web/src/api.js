@@ -42,7 +42,13 @@ export const customerApi = {
     }
     return request(`/tasks?${query}`, { signal });
   },
-  usage: (month, signal) => request(`/usage?${new URLSearchParams({ month })}`, { signal }),
+  usage: (month, signal, { day, page, pageSize, includeTrend } = {}) => {
+    const query = new URLSearchParams({ month });
+    for (const [name, value] of Object.entries({ day, page, pageSize, includeTrend })) {
+      if (value != null) query.set(name, value);
+    }
+    return request(`/usage?${query}`, { signal });
+  },
   billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
   billingExportUrl: (id) =>
     typeof id === 'string' && /^stmt_[0-9a-f]{32}$/.test(id) ? `${customerPath}/billing/${id}/export.csv` : null,

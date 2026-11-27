@@ -26,6 +26,24 @@ test('customer read requests use same-origin cookies, no browser caching and exp
   }
 });
 
+test('usage requests opt into the overview trend and paginate details by the clicked day', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => json({}));
+  const controller = new AbortController();
+
+  await customerApi.usage('2026-12', controller.signal, { includeTrend: true, pageSize: 1 });
+  await customerApi.usage('2026-11', controller.signal, { day: '2026-11-30', page: 2, pageSize: 50 });
+  await customerApi.usage('2026-12', controller.signal, { day: null, page: 1, pageSize: 50 });
+
+  assert.deepEqual(
+    fetch.mock.calls.map(({ arguments: [path] }) => path),
+    [
+      '/api/customer/usage?month=2026-12&pageSize=1&includeTrend=true',
+      '/api/customer/usage?month=2026-11&day=2026-11-30&page=2&pageSize=50',
+      '/api/customer/usage?month=2026-12&page=1&pageSize=50',
+    ],
+  );
+});
+
 test('monthly statements are paginated same-origin reads with a scoped CSV path', async (t) => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => json({ status: 'estimate' }));
   const controller = new AbortController();
@@ -89,7 +107,10 @@ test('task records use only the customer session and key verification stays on t
   await customerApi.verifyPlaygroundKey('fixture-only', controller.signal);
 
   const [[list, listOptions], [verify, verifyOptions]] = fetch.mock.calls.map(({ arguments: args }) => args);
-  assert.equal(list, `/api/customer/tasks?page=2&pageSize=20&taskId=${taskId}&fromDate=2026-11-01&status=queued`);
+  assert.equal(
+    list,
+    `/api/customer/tasks?page=2&pageSize=20&taskId=${taskId}&fromDate=2026-11-01&status=queued`,
+  );
   assert.equal(listOptions.credentials, 'same-origin');
   assert.equal(listOptions.cache, 'no-store');
   assert.equal(listOptions.headers.Authorization, undefined);

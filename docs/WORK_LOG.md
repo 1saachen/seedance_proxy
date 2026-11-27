@@ -4,6 +4,12 @@
 
 ## 2026 年 11 月 27 日
 
+### 客户概览费用趋势
+
+- 客户工作台的前几版只实现了月度汇总和逐笔明细。本次补上原型中的折后费用柱状图，以北京时间的任务创建日统计最近七天，按模型堆叠本项目的已计价折后金额。图表单独标示待计价和实际零元。
+- 选择日期打开当天的用量明细，分页显示任务、真实输出 Token 和折后金额。月度账单继续按任务结束月份归集。
+- 后端 103 项测试、前端 15 项测试及 Vite 生产构建通过。本地 Chromium 使用临时 SQLite 和合成客户验证模型堆叠、待计价和零元、跨项目隔离、键盘进入明细及窄屏布局。线上部署待安排。
+
 ### 快速接入文案
 
 - 首页、手册、工作台和 README 以 API 地址和业务 Key 介绍接入。以通用 HTTP 请求说明客户端接入，将 Bash 的模型查询单独列出，方便客户先查模型再提交任务。 [New API 快速上手](https://docs.newapi.pro/zh/docs/guide/feature-guide/user/quick-start) · [OpenRouter 快速上手](https://openrouter.ai/docs/quickstart) · [LiteLLM 客户端接入](https://docs.litellm.ai/docs/proxy/client_setup/overview)

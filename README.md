@@ -32,6 +32,7 @@ pnpm dev
 
 - 登录工作台后打开「视频体验」。输入本项目的业务 Key，或在页面上创建一枚用于体验的 Key。选择 Seedance 模型、视频参数和参考素材，填写提示词并生成。页面展示当前任务的进度、用量和可用结果。业务 Key 只保留在本次工作台会话的页面内存中。
 - 「任务记录」可查看本项目通过 API 和视频体验提交的任务。支持按完整任务 ID、北京时间提交日期范围和状态筛选，分页查看模型、提交和结束时间、输出 Token 以及失败说明。查阅视频需要创建该任务时使用的业务 Key，结果地址可能过期。
+- 「概览」按模型显示最近 7 个北京时间自然日的已计价折后费用。选择日期可查看当天的逐笔用量和金额。图表按任务创建日统计，月度账单按任务结束月份归集。
 - 工作台使用登录会话读取 `GET /api/customer/tasks`。可选参数为 `taskId`、`fromDate`、`toDate`、`status`、`page` 和 `pageSize`。起止日期包含当天，默认每页 20 条，最多 100 条。`GET /api/customer/playground/key` 同时校验会话和 `Authorization: Bearer <业务 Key>`。本项目的有效 Key 返回 `204`。视频、素材和任务结果仍使用下文的业务 API。
 
 ## API 接入
@@ -170,7 +171,9 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 项目默认未计费。按任务创建时间（UTC）匹配已生效的客户价目和项目计费条款，价目由运营录入。已开通项目的成功任务缺少真实用量、计价条件、适用价目或任务结束时间时进入待计价。项目折扣以应付比例的基点表达，`8000` 表示按原价的 80% 支付（8 折）。折前和折后金额各自四舍五入到整数微元，响应以人民币元六位小数的字符串返回。
 
-工作台通过客户会话读取 `GET /api/customer/usage?month=YYYY-MM`。`summary.pricedCalls` 为所选月份的已计价任务数。`items[].billing` 为 `null` 或计价明细，其 `status` 可为 `priced`（已计价）、`pending`（待计价）或 `unbilled`（未计费）。其他字段包括 `pendingReason`、`resolution`、`containsVideoInput`、`priceVersion`、`termsVersion`、`unitPrice`、`payableBps`、`listAmount` 和 `amount`。`unitPrice` 为人民币元／百万 Token，`listAmount` 为折前金额，`amount` 为折后金额。
+工作台通过客户会话读取 `GET /api/customer/usage?month=YYYY-MM`。`summary.pricedCalls` 为所选日期范围的已计价任务数。`items[].billing` 为 `null` 或计价明细，其 `status` 可为 `priced`（已计价）、`pending`（待计价）或 `unbilled`（未计费）。其他字段包括 `pendingReason`、`resolution`、`containsVideoInput`、`priceVersion`、`termsVersion`、`unitPrice`、`payableBps`、`listAmount` 和 `amount`。`unitPrice` 为人民币元／百万 Token，`listAmount` 为折前金额，`amount` 为折后金额。
+
+可用 `day=YYYY-MM-DD` 筛选北京时间的任务创建日期。只传 `day` 时按该日期确定月份。明细支持 `page`、`pageSize` 分页，默认每页 100 条，最多 100 条。`summary.calls` 统计全部符合筛选条件的调用。添加 `includeTrend=true` 时，响应附带 `spendTrend`。它按北京时间的任务创建日统计最近 7 日，与列表筛选及分页独立。金额只汇总已计价的折后费用，待计价调用单独计数。没有已计价明细时金额为 `null`，实际已计价零元为 `"0.000000"`。
 
 ### 配置价目与项目折扣
 
