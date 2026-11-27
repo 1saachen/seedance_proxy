@@ -540,6 +540,112 @@
   font-size: 1.3rem;
 }
 
+.admin-price-heading-actions,
+.admin-price-import-controls,
+.admin-price-preview-meta,
+.admin-price-import-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem 0.85rem;
+}
+
+.admin-price-heading-actions {
+  justify-content: flex-end;
+}
+
+.admin-price-import-dialog {
+  width: min(100% - 2rem, 58rem);
+}
+
+.admin-price-import-note {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.admin-price-import-controls {
+  margin-block: 0.95rem 0.75rem;
+}
+
+.admin-price-preview-meta {
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 0.65rem 0.75rem;
+  background: var(--fog);
+  font-size: 0.88rem;
+}
+
+.admin-price-preview-meta span {
+  display: block;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.admin-price-preview-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.15rem;
+  margin-block: 0.7rem;
+  font-size: 0.9rem;
+}
+
+.admin-price-preview-counts > div {
+  display: flex;
+  gap: 0.3rem;
+  color: var(--muted);
+}
+
+.admin-price-preview-counts dd {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-price-import-dialog .admin-table-scroll {
+  max-height: min(43vh, 29rem);
+  margin-bottom: 0.55rem;
+}
+
+.admin-price-preview-table {
+  min-width: 41rem;
+}
+
+.admin-price-preview-table th {
+  position: sticky;
+  top: 0;
+  background: var(--fog);
+}
+
+.admin-price-import-footer {
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--line);
+  margin-top: 0.9rem;
+  padding-top: 0.75rem;
+}
+
+.admin-price-import-review {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 2rem;
+  font-size: 0.88rem;
+}
+
+.admin-price-import-review input {
+  flex: 0 0 1.125rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--blue);
+}
+
+.admin-price-import-footer .admin-form-actions {
+  margin-top: 0;
+}
+
 .admin-form {
   display: grid;
   gap: 0.75rem;
@@ -640,6 +746,33 @@
 }
 
 @media (max-width: 35rem) {
+  .admin-price-import-dialog .admin-table-scroll {
+    max-height: min(32dvh, 22rem);
+  }
+
+  .admin-price-preview-table {
+    width: 30rem;
+    min-width: 0;
+    table-layout: fixed;
+  }
+
+  .admin-price-preview-table th:nth-child(1) { width: 7.75rem; }
+  .admin-price-preview-table th:nth-child(2) { width: 5.45rem; }
+  .admin-price-preview-table th:nth-child(3) { width: 5.75rem; }
+  .admin-price-preview-table th:nth-child(4) { width: 3.4rem; }
+
+  .admin-price-preview-table td:first-child {
+    overflow-wrap: anywhere;
+  }
+
+  .admin-price-preview-table .admin-amount {
+    font-size: 0.82rem;
+  }
+
+  .admin-price-import-footer .admin-form-actions {
+    margin-inline-start: auto;
+  }
+
   .admin-workspace,
   .admin-header-inner {
     width: calc(100% - 1.2rem);

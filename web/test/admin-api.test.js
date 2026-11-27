@@ -58,3 +58,40 @@ test('admin Key limit updates send both limits to the scoped path with CSRF', as
   assert.equal(options.headers['X-CSRF-Token'], 'fixture-csrf');
   assert.deepEqual(JSON.parse(options.body), { concurrencyLimit: null, rpmLimit: 45 });
 });
+
+test('official price import previews the Beijing time and applies its server token with CSRF', async (t) => {
+  const preview = { effectiveAt: '2026-11-28T16:00:00Z', previewToken: 'fixture-preview-token' };
+  const applied = { createdCount: 28, skippedCount: 0 };
+  const controller = new AbortController();
+  const fetch = t.mock.method(globalThis, 'fetch', async (_path, { method }) =>
+    Response.json(method === 'GET' ? preview : applied),
+  );
+
+  const selection = await adminApi.previewVolcenginePrices('2026-11-29T00:00+08:00', controller.signal);
+  assert.deepEqual(selection, preview);
+  assert.deepEqual(await adminApi.applyVolcenginePrices(selection, 'fixture-csrf'), applied);
+
+  const [[previewPath, read], [applyPath, write]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  assert.equal(previewPath, '/api/admin/prices/volcengine/preview?effectiveAt=2026-11-29T00%3A00%2B08%3A00');
+  assert.equal(read.signal, controller.signal);
+  assert.equal(read.headers['X-CSRF-Token'], undefined);
+  assert.equal(applyPath, '/api/admin/prices/volcengine/apply');
+  assert.equal(write.method, 'POST');
+  assert.equal(write.headers['X-CSRF-Token'], 'fixture-csrf');
+  assert.deepEqual(JSON.parse(write.body), preview);
+});
+
+test('a stale official price preview requires a fresh review and does not replay writes', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () =>
+    Response.json({ detail: { code: 'official_price_preview_stale' } }, { status: 409 }),
+  );
+  await assert.rejects(
+    adminApi.applyVolcenginePrices({ effectiveAt: '2026-12-01T00:00:00Z', previewToken: 'stale' }, 'fixture-csrf'),
+    (error) => {
+      assert.equal(error.status, 409);
+      assert.match(adminErrorMessage(error), /刷新预览后重新核对/);
+      return true;
+    },
+  );
+  assert.equal(fetch.mock.callCount(), 1);
+});

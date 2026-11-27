@@ -84,7 +84,7 @@ export function DataTable({ label, headings, empty, children, tableClass = '' })
   );
 }
 
-export function Dialog({ title, onClose, busy, children }) {
+export function Dialog({ title, onClose, busy, children, className = '' }) {
   const dialog = useRef(null);
   useEffect(() => {
     const element = dialog.current;
@@ -94,7 +94,7 @@ export function Dialog({ title, onClose, busy, children }) {
   return (
     <dialog
       ref={dialog}
-      className="admin-dialog"
+      className={`admin-dialog ${className}`}
       aria-labelledby="admin-dialog-title"
       onCancel={(event) => {
         event.preventDefault();

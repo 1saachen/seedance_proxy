@@ -57,6 +57,8 @@ export const adminApi = {
   createTerms: (id, body, csrfToken) => request(projectPath(id) + '/billing-terms', { method: 'POST', body, csrfToken }),
   prices: (page, signal) => query('/prices', { page, pageSize: 25 }, signal),
   createPrice: (body, csrfToken) => request('/prices', { method: 'POST', body, csrfToken }),
+  previewVolcenginePrices: (effectiveAt, signal) => query('/prices/volcengine/preview', { effectiveAt }, signal),
+  applyVolcenginePrices: (body, csrfToken) => request('/prices/volcengine/apply', { method: 'POST', body, csrfToken }),
   audit: (page, signal) => query('/audit', { page, pageSize: 25 }, signal),
 };
 
@@ -70,6 +72,16 @@ export function adminErrorMessage(error) {
       return '应付金额已经变化，请刷新账单并重新核对。';
     case 'api_key_revoked':
       return '这枚业务 Key 已撤销。请刷新用量以查看最新状态。';
+    case 'invalid_effective_at':
+      return '请选择有效的北京时间，精确到秒。';
+    case 'official_price_effective_too_early':
+      return '生效时间需在官网价核验日期当天或之后。';
+    case 'official_price_catalog_incomplete':
+      return '当前官网价目录不完整，暂时无法导入。';
+    case 'official_price_preview_stale':
+      return '价目已发生变化，请刷新预览后重新核对。';
+    case 'price_conflict':
+      return '所选时间存在冲突价目，请刷新预览并选择其他生效时间。';
     default:
       break;
   }

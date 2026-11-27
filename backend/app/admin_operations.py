@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import accounts, billing, key_limits, statements, usage
+from . import accounts, billing, key_limits, official_price_import, statements, usage, volcengine_prices
 from .admin_auth import CurrentAdmin, record_audit
 from .model_api import SEEDANCE_MODELS
 
@@ -47,6 +47,13 @@ class PriceChange(BaseModel):
     effective_at: str = Field(alias="effectiveAt", max_length=40)
     unit_price: str = Field(alias="unitPrice", pattern=r"^[0-9]{1,7}(\.[0-9]{1,6})?$")
     source: str = Field(min_length=1, max_length=200)
+
+
+class OfficialPriceImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    effective_at: str = Field(alias="effectiveAt", max_length=40)
+    preview_token: str = Field(alias="previewToken", pattern=r"^[a-f0-9]{64}$")
 
 
 class KeyLimitChange(BaseModel):
@@ -311,3 +318,57 @@ def add_price(payload: PriceChange, request: Request, admin: CurrentAdmin) -> di
                 for field in ("upstreamModel", "resolution", "containsVideoInput", "effectiveAt", "unitPrice")
             })
         return price
+
+
+def _official_effective_at(value: str) -> int:
+    effective_at = _effective_at(value)
+    start = datetime.fromisoformat(volcengine_prices.VERIFIED_ON).replace(tzinfo=statements.BEIJING)
+    if effective_at < int(start.timestamp()):
+        raise _error(
+            422, "official_price_effective_too_early",
+            f"生效时间不得早于北京时间 {volcengine_prices.VERIFIED_ON}",
+        )
+    return effective_at
+
+
+def _official_price_preview(connection: sqlite3.Connection, effective_at: int) -> dict:
+    try:
+        return official_price_import.preview(connection, effective_at, PRICE_MODELS)
+    except official_price_import.CatalogIncompleteError:
+        raise _error(503, "official_price_catalog_incomplete", "官网价目未完整覆盖本站模型与档位") from None
+
+
+@router.get("/prices/volcengine/preview")
+def preview_volcengine_prices(
+    request: Request, _: CurrentAdmin, effective_at: Annotated[str, Query(alias="effectiveAt", max_length=40)],
+) -> dict:
+    timestamp = _official_effective_at(effective_at)
+    with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN")
+        return _official_price_preview(connection, timestamp)
+
+
+@router.post("/prices/volcengine/apply")
+def apply_volcengine_prices(payload: OfficialPriceImport, request: Request, admin: CurrentAdmin) -> dict:
+    timestamp = _official_effective_at(payload.effective_at)
+    with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        preview = _official_price_preview(connection, timestamp)
+        if payload.preview_token != preview["previewToken"]:
+            raise _error(409, "official_price_preview_stale", "价目已更新，请重新预览后再应用")
+        if not preview["canApply"]:
+            raise _error(409, "price_conflict", "部分计价档位在该生效时间已有不同价目，请选择其他时间")
+
+        changes = [item for item in preview["items"] if item["status"] in {"add", "change"}]
+        source = volcengine_prices.SOURCE_LABEL
+        for item in changes:
+            tier = (item["upstreamModel"], item["resolution"], item["containsVideoInput"])
+            billing.add_price(
+                connection, upstream_model=tier[0], resolution=tier[1], contains_video_input=tier[2],
+                effective_at=timestamp, unit_price_micros_per_million=volcengine_prices.PUBLIC_PRICES[tier], source=source,
+            )
+        if changes:
+            record_audit(connection, admin, "billing.price.import", "price_catalog", preview["version"], {
+                "version": preview["version"], "effectiveAt": preview["effectiveAt"], "createdCount": len(changes),
+            })
+        return {"createdCount": len(changes), "skippedCount": len(preview["items"]) - len(changes)}
