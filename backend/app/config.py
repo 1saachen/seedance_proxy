@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     )
 
     database_path: Path = Path("data/seedance.sqlite")
+    customer_demo_project_id: str | None = None
+    customer_demo_database_path: Path | None = None
     registration_enabled: bool = False
     cookie_secure: bool = True
     ark_api_key: SecretStr | None = None
@@ -31,9 +33,9 @@ class Settings(BaseSettings):
     upload_ttl_seconds: int = Field(default=172800, ge=60, le=604800)
     upload_cleanup_seconds: int = Field(default=60, ge=0, le=3600)
 
-    @field_validator("upload_directory", mode="before")
+    @field_validator("upload_directory", "customer_demo_database_path", mode="before")
     @classmethod
-    def parse_upload_directory(cls, value):
+    def parse_optional_path(cls, value):
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("upload_public_origin")

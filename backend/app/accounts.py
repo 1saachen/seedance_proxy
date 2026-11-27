@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, SecretStr
 
+from .customer_demo import demo_session_info
+
 
 SESSION_COOKIE = "seedance_customer_session"
 SESSION_PATH = "/api/customer"
@@ -187,10 +189,11 @@ def _new_session(connection: sqlite3.Connection, customer_id: str, previous: str
     return token
 
 
-def _customer_payload(customer: CustomerPrincipal, token: str) -> dict:
+def _customer_payload(request: Request, customer: CustomerPrincipal, token: str) -> dict:
     return {
         "customer": {"id": customer.id, "email": customer.email, "projectId": customer.project_id},
         "csrfToken": _csrf_token(token),
+        **demo_session_info(request.app.state.settings, customer.project_id),
     }
 
 
@@ -199,7 +202,7 @@ def _session_response(request: Request, response: Response, customer: CustomerPr
         SESSION_COOKIE, token, max_age=SESSION_SECONDS, path=SESSION_PATH,
         secure=request.app.state.settings.cookie_secure, httponly=True, samesite="strict",
     )
-    return _customer_payload(customer, token)
+    return _customer_payload(request, customer, token)
 
 
 def require_customer(request: Request) -> CustomerPrincipal:
@@ -306,7 +309,7 @@ def login(credentials: Credentials, request: Request, response: Response) -> dic
 
 @router.get("/me")
 def current_customer(request: Request, customer: CurrentCustomer) -> dict:
-    return _customer_payload(customer, _session_token(request))
+    return _customer_payload(request, customer, _session_token(request))
 
 
 @router.post("/logout", status_code=204)

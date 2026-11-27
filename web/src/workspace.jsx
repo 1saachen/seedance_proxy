@@ -41,15 +41,28 @@ function currentMonth() {
   return `${year}-${month}`;
 }
 
+function isUsageView(sectionId) {
+  return sectionId === 'overview' || sectionId === 'billing';
+}
+
+function sectionHref(sectionId, { day, demo } = {}) {
+  const query = new URLSearchParams();
+  if (sectionId === 'billing' && day) query.set('day', day);
+  if (isUsageView(sectionId) && demo) query.set('demo', 'true');
+  return `#${sectionId}${query.size ? `?${query}` : ''}`;
+}
+
 function readRoute() {
   const [id, query] = window.location.hash.slice(1).split('?');
   const section = sections.find((item) => item.id === id) ?? sections[0];
-  const day = section.id === 'billing' ? new URLSearchParams(query).get('day') : null;
+  const params = new URLSearchParams(query);
+  const demo = isUsageView(section.id) && params.get('demo') === 'true';
+  const day = section.id === 'billing' ? params.get('day') : null;
   if (/^2\d{3}-\d{2}-\d{2}$/.test(day ?? '')) {
     const date = new Date(`${day}T00:00:00Z`);
-    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day) return { section, day };
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === day) return { section, day, demo };
   }
-  return { section, day: null };
+  return { section, day: null, demo };
 }
 
 function useRemote(load, onExpired) {
@@ -111,10 +124,14 @@ function UsageSummary({ summary }) {
   );
 }
 
-function Overview({ customer, keys, month, onExpired }) {
+function Overview({ customer, keys, month, demo, onExpired }) {
   const activeKeys = keys.data?.keys.filter((key) => key.status === 'active').length;
-  const load = useCallback((signal) => customerApi.usage(month, signal, { includeTrend: true, pageSize: 1 }), [month]);
+  const load = useCallback(
+    (signal) => customerApi.usage(month, signal, { includeTrend: true, pageSize: 1, demo }),
+    [month, demo],
+  );
   const usage = useRemote(load, onExpired);
+  const billingHref = (day) => sectionHref('billing', { day, demo });
   return (
     <>
       <section className="panel overview-usage" aria-labelledby="month-heading">
@@ -123,7 +140,7 @@ function Overview({ customer, keys, month, onExpired }) {
             <h2 id="month-heading">本月用量</h2>
             <p><time dateTime={month}>{month}</time>（北京时间）</p>
           </div>
-          <a href="#billing">查看用量明细</a>
+          <a href={billingHref()}>查看用量明细</a>
         </div>
         <LoadState state={usage}>{({ summary }) => <UsageSummary summary={summary} />}</LoadState>
       </section>
@@ -131,10 +148,12 @@ function Overview({ customer, keys, month, onExpired }) {
         <div className="panel-head">
           <div>
             <h2 id="spend-heading">近 7 日折后费用</h2>
-            <p>按北京时间的任务创建日期归集，包含当日。</p>
+            <p>{demo ? '按北京时间的任务创建日期汇总模拟用量。' : '按北京时间的任务创建日期归集，包含当日。'}</p>
           </div>
         </div>
-        <LoadState state={usage}>{({ spendTrend }) => <SpendTrend trend={spendTrend} />}</LoadState>
+        <LoadState state={usage}>
+          {({ spendTrend }) => <SpendTrend trend={spendTrend} dayHref={billingHref} />}
+        </LoadState>
       </section>
       <div className="overview-layout">
         <section className="panel" aria-labelledby="overview-heading">
@@ -474,10 +493,10 @@ function SetupGuide() {
   );
 }
 
-function MonthlyStatement({ month, current, onExpired }) {
+function MonthlyStatement({ month, current, demo, onExpired }) {
   const [page, setPage] = useState(1);
   const summaryRef = useRef(null);
-  const load = useCallback((signal) => customerApi.billing(month, page, signal), [month, page]);
+  const load = useCallback((signal) => customerApi.billing(month, page, signal, { demo }), [month, page, demo]);
   const statement = useRemote(load, onExpired);
 
   function goToPage(next) {
@@ -489,7 +508,7 @@ function MonthlyStatement({ month, current, onExpired }) {
     <div ref={summaryRef} tabIndex={-1} role="group" aria-label="月度账单明细">
       <LoadState state={statement}>
         {({ id, status, confirmedAt, summary, pagination, items }) => {
-          const confirmed = status === 'confirmed';
+          const confirmed = !demo && status === 'confirmed';
           const csv = confirmed ? customerApi.billingExportUrl(id) : null;
           const lastPage = Math.max(1, Math.ceil(pagination.total / pagination.pageSize));
           return (
@@ -524,7 +543,11 @@ function MonthlyStatement({ month, current, onExpired }) {
                 )}
               </div>
               <p className="statement-note">
-                {confirmed ? `${formatDate(confirmedAt)} 确认，金额已固定。` : '待计价任务补齐用量和价目后计入账单。'}
+                {demo
+                  ? '这些费用由模拟记录计算。'
+                  : confirmed
+                    ? `${formatDate(confirmedAt)} 确认，金额已固定。`
+                    : '待计价任务补齐用量和价目后计入账单。'}
               </p>
               {items.length === 0 ? (
                 <p className="empty">该账期暂无已计价明细。</p>
@@ -583,11 +606,11 @@ function MonthlyStatement({ month, current, onExpired }) {
   );
 }
 
-function UsageRows({ month, day, onExpired, title }) {
+function UsageRows({ month, day, demo, onExpired, title }) {
   const [page, setPage] = useState(1);
   const load = useCallback(
-    (signal) => customerApi.usage(month, signal, { day, page, pageSize: 50 }),
-    [month, day, page],
+    (signal) => customerApi.usage(month, signal, { day, page, pageSize: 50, demo }),
+    [month, day, page, demo],
   );
   const usage = useRemote(load, onExpired);
 
@@ -669,7 +692,7 @@ function UsageRows({ month, day, onExpired, title }) {
   );
 }
 
-function UsageDetails({ month, day, onClearDay, onExpired }) {
+function UsageDetails({ month, day, demo, onClearDay, onExpired }) {
   const title = useRef(null);
   useEffect(() => {
     if (day) title.current?.focus();
@@ -694,18 +717,22 @@ function UsageDetails({ month, day, onClearDay, onExpired }) {
           </div>
         )}
       </div>
-      <UsageRows key={day ?? month} month={month} day={day} onExpired={onExpired} title={title} />
+      <UsageRows key={day ?? month} month={month} day={day} demo={demo} onExpired={onExpired} title={title} />
     </section>
   );
 }
 
-function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
+function Billing({ month, setMonth, maxMonth, day, demo, onClearDay, onExpired }) {
   const statement = (
     <section className="panel" aria-labelledby="billing-heading" key="statement">
       <div className="panel-head">
         <div>
-          <h2 id="billing-heading">月度账单</h2>
-          <p>按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。</p>
+          <h2 id="billing-heading">{demo ? '模拟月度账单' : '月度账单'}</h2>
+          <p>
+            {demo
+              ? '按北京时间的任务结束月份汇总模拟费用。'
+              : '按北京时间的任务结束月份归集，确认后补齐的用量计入后续开放账期。'}
+          </p>
         </div>
         <label className="month-filter">
           月份
@@ -720,7 +747,7 @@ function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
           />
         </label>
       </div>
-      <MonthlyStatement key={month} month={month} current={month === maxMonth} onExpired={onExpired} />
+      <MonthlyStatement key={month} month={month} current={month === maxMonth} demo={demo} onExpired={onExpired} />
     </section>
   );
   const usage = (
@@ -728,6 +755,7 @@ function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
       key="usage"
       month={day?.slice(0, 7) ?? month}
       day={day}
+      demo={demo}
       onClearDay={onClearDay}
       onExpired={onExpired}
     />
@@ -736,13 +764,17 @@ function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
 }
 
 export function Workspace({ session, onSessionEnded }) {
-  const [{ section, day }, setRoute] = useState(readRoute);
+  const [{ section, day, demo: requestedDemo }, setRoute] = useState(readRoute);
   const [videoKey, setVideoKey] = useState('');
   const [month, setMonth] = useState(currentMonth);
+  const [demoMonth, setDemoMonth] = useState(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState('');
   const maxMonth = currentMonth();
   const keys = useRemote(customerApi.keys, onSessionEnded);
+  const showDemoControl = session.demoUsageAvailable === true && isUsageView(section.id);
+  const demo = showDemoControl && requestedDemo;
+  const displayMaxMonth = demo ? session.demoUsageMonth ?? maxMonth : maxMonth;
 
   useEffect(() => {
     const onHashChange = () => setRoute(readRoute());
@@ -752,12 +784,13 @@ export function Workspace({ session, onSessionEnded }) {
 
   function clearBillingDay() {
     if (!day) return;
-    window.history.replaceState(window.history.state, '', '#billing');
+    window.history.replaceState(window.history.state, '', sectionHref('billing', { demo }));
     setRoute(readRoute());
   }
 
   function changeBillingMonth(next) {
-    setMonth(next);
+    if (demo) setDemoMonth(next);
+    else setMonth(next);
     clearBillingDay();
   }
 
@@ -805,7 +838,11 @@ export function Workspace({ session, onSessionEnded }) {
             <div key={label} className="workspace-nav-group">
               <p>{label}</p>
               {items.map((item) => (
-                <a key={item.id} href={`#${item.id}`} aria-current={section.id === item.id ? 'page' : undefined}>
+                <a
+                  key={item.id}
+                  href={sectionHref(item.id, { demo })}
+                  aria-current={section.id === item.id ? 'page' : undefined}
+                >
                   <span className="nav-mark" aria-hidden="true">{item.mark}</span>
                   {item.label}
                 </a>
@@ -828,7 +865,17 @@ export function Workspace({ session, onSessionEnded }) {
             {error}
           </p>
         )}
-        {section.id === 'overview' && <Overview keys={keys} month={maxMonth} customer={session.customer} onExpired={onSessionEnded} />}
+        {showDemoControl && (
+          <div className={demo ? 'notice usage-demo-control' : 'usage-demo-control'}>
+            {demo && <p role="status">模拟用量 · 金额仅用于演示</p>}
+            <a className="button secondary" href={sectionHref(section.id, { demo: !demo })}>
+              {demo ? '返回真实用量' : '模拟用量'}
+            </a>
+          </div>
+        )}
+        {section.id === 'overview' && (
+          <Overview keys={keys} month={displayMaxMonth} customer={session.customer} demo={demo} onExpired={onSessionEnded} />
+        )}
         {section.id === 'api' && (
           <>
             <KeyPanel state={keys} csrfToken={session.csrfToken} onExpired={onSessionEnded} />
@@ -847,7 +894,16 @@ export function Workspace({ session, onSessionEnded }) {
         </div>
         {section.id === 'tasks' && <TaskRecords videoKey={videoKey} onExpired={onSessionEnded} />}
         {section.id === 'billing' && (
-          <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} onClearDay={clearBillingDay} onExpired={onSessionEnded} />
+          <Billing
+            key={demo ? 'demo' : 'actual'}
+            month={demo ? demoMonth ?? displayMaxMonth : month}
+            setMonth={changeBillingMonth}
+            maxMonth={displayMaxMonth}
+            day={day}
+            demo={demo}
+            onClearDay={clearBillingDay}
+            onExpired={onSessionEnded}
+          />
         )}
       </main>
     </div>

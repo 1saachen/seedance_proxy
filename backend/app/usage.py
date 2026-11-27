@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .accounts import CustomerPrincipal, require_customer
+from .customer_demo import customer_read_scope, demo_snapshot_date
 
 
 router = APIRouter(prefix="/api/customer", tags=["Customer usage"])
@@ -102,25 +103,26 @@ def customer_usage(
     include_trend: Annotated[bool, Query(alias="includeTrend")] = False,
     page: Annotated[int, Query(ge=1, le=1_000_000)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 100,
+    demo: bool = False,
 ):
-    today = datetime.now(SHANGHAI).date()
-    if day is not None:
-        try:
-            start = date.fromisoformat(day)
-        except ValueError as error:
-            raise HTTPException(422, {"code": "invalid_usage_day", "message": "请选择有效的使用日期"}) from error
-        day_month = start.strftime("%Y-%m")
-        if month is not None and month != day_month:
-            raise HTTPException(422, {"code": "usage_day_month_mismatch", "message": "日期须属于所选月份"})
-        month = day_month
-        end = start + timedelta(days=1)
-    else:
-        month = month or today.strftime("%Y-%m")
-        year, calendar_month = map(int, month.split("-"))
-        start = date(year, calendar_month, 1)
-        end = date(year + (calendar_month == 12), calendar_month % 12 + 1, 1)
-    scope = _created_scope(customer.project_id, start, end)
-    with request.app.state.db.connect() as connection:
+    with customer_read_scope(request, customer.project_id, demo) as (connection, project_id):
+        today = (demo_snapshot_date(connection) if demo else None) or datetime.now(SHANGHAI).date()
+        if day is not None:
+            try:
+                start = date.fromisoformat(day)
+            except ValueError as error:
+                raise HTTPException(422, {"code": "invalid_usage_day", "message": "请选择有效的使用日期"}) from error
+            day_month = start.strftime("%Y-%m")
+            if month is not None and month != day_month:
+                raise HTTPException(422, {"code": "usage_day_month_mismatch", "message": "日期须属于所选月份"})
+            month = day_month
+            end = start + timedelta(days=1)
+        else:
+            month = month or today.strftime("%Y-%m")
+            year, calendar_month = map(int, month.split("-"))
+            start = date(year, calendar_month, 1)
+            end = date(year + (calendar_month == 12), calendar_month % 12 + 1, 1)
+        scope = _created_scope(project_id, start, end)
         connection.execute("BEGIN")
         totals = connection.execute(
             """SELECT COUNT(*) AS calls,
@@ -139,7 +141,7 @@ def customer_usage(
                 + " ORDER BY datetime(task.created_at) DESC, task.id DESC LIMIT ? OFFSET ?",
             (*scope, page_size, (page - 1) * page_size),
         ).fetchall()
-        trend = {"spendTrend": _spend_trend(connection, customer.project_id, today)} if include_trend else {}
+        trend = {"spendTrend": _spend_trend(connection, project_id, today)} if include_trend else {}
     return {
         "month": month,
         "currency": "CNY",
@@ -148,5 +150,6 @@ def customer_usage(
         "summary": dict(totals),
         "items": [_usage_item(row) for row in records],
         **({"day": day} if day is not None else {}),
+        **({"demo": True} if demo else {}),
         **trend,
     }

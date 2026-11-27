@@ -175,6 +175,8 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 可用 `day=YYYY-MM-DD` 筛选北京时间的任务创建日期。只传 `day` 时按该日期确定月份。明细支持 `page`、`pageSize` 分页，默认每页 100 条，最多 100 条。`summary.calls` 统计全部符合筛选条件的调用。添加 `includeTrend=true` 时，响应附带 `spendTrend`。它按北京时间的任务创建日统计最近 7 日，与列表筛选及分页独立。金额只汇总已计价的折后费用，待计价调用单独计数。没有已计价明细时金额为 `null`，实际已计价零元为 `"0.000000"`。
 
+指定的测试项目可在已登录的工作台切换「模拟用量」。由服务端的 `SEEDANCE_CUSTOMER_DEMO_PROJECT_ID` 指定项目，`SEEDANCE_CUSTOMER_DEMO_DATABASE_PATH` 指向一份独立的只读 SQLite 测试快照。工作台仅为该项目的用量与账单预估请求附加 `demo=true`。模拟页面有独立提示，使用样本的日期范围，可随时返回真实用量。
+
 ### 配置价目与项目折扣
 
 运营在 `backend/` 目录运行以下命令，指定已初始化的 SQLite 文件、客户项目 ID、约定单价和来源。`BILLING_EFFECTIVE_AT` 使用带时区、精确到秒的 ISO 8601 时间，例如 `2026-12-01T00:00:00+08:00`。按相同方式为适用的模型、输出分辨率和视频输入档位分别录入价目。标准版的 4K 价目使用 `--resolution 4k`。2.5 Flash、2.0 Fast 和 2.0 Mini 的价目按各自的方舟模型版本录入，包含 480p 和 720p 的有视频输入、无视频输入档位。
