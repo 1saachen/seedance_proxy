@@ -199,6 +199,8 @@ def test_import_requires_admin_csrf_complete_catalog_and_verified_date(tmp_path,
         preview = _preview(client).json()
         assert _apply(client, {}, preview).status_code == 403
         assert _preview(client, _utc_iso(VERIFIED_START)).status_code == 200
+        far_future = _preview(client, "9999-12-31T23:59:59Z")
+        assert far_future.status_code == 200 and far_future.json()["effectiveAt"] == "9999-12-31T23:59:59Z"
         early = _preview(client, _utc_iso(VERIFIED_START - timedelta(seconds=1)))
         assert early.status_code == 422 and early.json()["detail"]["code"] == "official_price_effective_too_early"
         assert _preview(client, "2026-12-01T00:00:00").json()["detail"]["code"] == "invalid_effective_at"

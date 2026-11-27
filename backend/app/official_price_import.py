@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 import hashlib
 import json
@@ -12,7 +12,8 @@ class CatalogIncompleteError(ValueError):
 
 
 def _effective_iso(seconds: int) -> str:
-    return datetime.fromtimestamp(seconds, UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    timestamp = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=seconds)
+    return timestamp.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _price_version(
