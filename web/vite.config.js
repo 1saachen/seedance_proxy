@@ -58,6 +58,7 @@ export default defineConfig({
       input: {
         home: fileURLToPath(new URL('./index.html', import.meta.url)),
         console: fileURLToPath(new URL('./console/index.html', import.meta.url)),
+        admin: fileURLToPath(new URL('./admin/index.html', import.meta.url)),
         docs: fileURLToPath(new URL('./docs/index.html', import.meta.url)),
       },
     },

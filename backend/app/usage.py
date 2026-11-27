@@ -94,6 +94,60 @@ def _spend_trend(connection: sqlite3.Connection, project_id: str, today: date) -
     return {"totalAmount": _yuan(total_micros), "days": trend}
 
 
+def project_usage(
+    connection: sqlite3.Connection, project_id: str, *, today: date, month: str | None, day: str | None = None,
+    page: int, page_size: int, include_trend: bool = False, include_pending_count: bool = False,
+) -> dict:
+    if day is not None:
+        try:
+            start = date.fromisoformat(day)
+        except ValueError as error:
+            raise HTTPException(422, {"code": "invalid_usage_day", "message": "请选择有效的使用日期"}) from error
+        day_month = start.strftime("%Y-%m")
+        if month is not None and month != day_month:
+            raise HTTPException(422, {"code": "usage_day_month_mismatch", "message": "日期须属于所选月份"})
+        month = day_month
+        end = start + timedelta(days=1)
+    else:
+        month = month or today.strftime("%Y-%m")
+        year, calendar_month = map(int, month.split("-"))
+        start = date(year, calendar_month, 1)
+        end = date(year + (calendar_month == 12), calendar_month % 12 + 1, 1)
+    scope = _created_scope(project_id, start, end)
+    totals = connection.execute(
+        """SELECT COUNT(*) AS calls,
+            COUNT(CASE WHEN task.status = 'succeeded' THEN 1 END) AS successful,
+            SUM(CASE WHEN task.status = 'succeeded' THEN task.output_tokens END) AS outputTokens,
+            COUNT(CASE WHEN charge.status = 'priced' THEN 1 END) AS pricedCalls,
+            COUNT(CASE WHEN charge.status = 'pending' THEN 1 END) AS pendingCalls """ + CHARGES + CREATED_SCOPE,
+        scope,
+    ).fetchone()
+    records = connection.execute(
+        """SELECT task.id, task.model, task.status, task.output_tokens AS outputTokens,
+            task.created_at AS createdAt, task.settled_at AS settledAt,
+            charge.status AS billing_status, charge.pending_reason, charge.resolution,
+            charge.contains_video_input, charge.price_id, charge.terms_id,
+            charge.unit_price_micros_per_million, charge.payable_bps, charge.list_amount_micros,
+            charge.amount_micros """ + CHARGES + CREATED_SCOPE
+            + " ORDER BY datetime(task.created_at) DESC, task.id DESC LIMIT ? OFFSET ?",
+        (*scope, page_size, (page - 1) * page_size),
+    ).fetchall()
+    trend = {"spendTrend": _spend_trend(connection, project_id, today)} if include_trend else {}
+    summary = dict(totals)
+    if not include_pending_count:
+        summary.pop("pendingCalls")
+    return {
+        "month": month,
+        "currency": "CNY",
+        "page": page,
+        "pageSize": page_size,
+        "summary": summary,
+        "items": [_usage_item(row) for row in records],
+        **({"day": day} if day is not None else {}),
+        **trend,
+    }
+
+
 @router.get("/usage")
 def customer_usage(
     request: Request,
@@ -105,49 +159,8 @@ def customer_usage(
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 100,
 ):
     with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
-        today = snapshot_date or datetime.now(SHANGHAI).date()
-        if day is not None:
-            try:
-                start = date.fromisoformat(day)
-            except ValueError as error:
-                raise HTTPException(422, {"code": "invalid_usage_day", "message": "请选择有效的使用日期"}) from error
-            day_month = start.strftime("%Y-%m")
-            if month is not None and month != day_month:
-                raise HTTPException(422, {"code": "usage_day_month_mismatch", "message": "日期须属于所选月份"})
-            month = day_month
-            end = start + timedelta(days=1)
-        else:
-            month = month or today.strftime("%Y-%m")
-            year, calendar_month = map(int, month.split("-"))
-            start = date(year, calendar_month, 1)
-            end = date(year + (calendar_month == 12), calendar_month % 12 + 1, 1)
-        scope = _created_scope(project_id, start, end)
         connection.execute("BEGIN")
-        totals = connection.execute(
-            """SELECT COUNT(*) AS calls,
-                COUNT(CASE WHEN task.status = 'succeeded' THEN 1 END) AS successful,
-                SUM(CASE WHEN task.status = 'succeeded' THEN task.output_tokens END) AS outputTokens,
-                COUNT(CASE WHEN charge.status = 'priced' THEN 1 END) AS pricedCalls """ + CHARGES + CREATED_SCOPE,
-            scope,
-        ).fetchone()
-        records = connection.execute(
-            """SELECT task.id, task.model, task.status, task.output_tokens AS outputTokens,
-                task.created_at AS createdAt, task.settled_at AS settledAt,
-                charge.status AS billing_status, charge.pending_reason, charge.resolution,
-                charge.contains_video_input, charge.price_id, charge.terms_id,
-                charge.unit_price_micros_per_million, charge.payable_bps, charge.list_amount_micros,
-                charge.amount_micros """ + CHARGES + CREATED_SCOPE
-                + " ORDER BY datetime(task.created_at) DESC, task.id DESC LIMIT ? OFFSET ?",
-            (*scope, page_size, (page - 1) * page_size),
-        ).fetchall()
-        trend = {"spendTrend": _spend_trend(connection, project_id, today)} if include_trend else {}
-    return {
-        "month": month,
-        "currency": "CNY",
-        "page": page,
-        "pageSize": page_size,
-        "summary": dict(totals),
-        "items": [_usage_item(row) for row in records],
-        **({"day": day} if day is not None else {}),
-        **trend,
-    }
+        return project_usage(
+            connection, project_id, today=snapshot_date or datetime.now(SHANGHAI).date(),
+            month=month, day=day, page=page, page_size=page_size, include_trend=include_trend,
+        )

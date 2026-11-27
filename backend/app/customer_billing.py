@@ -31,6 +31,15 @@ def billing_month(
     request: Request, customer: Customer, month: Month = None, page: Page = 1, page_size: PageSize = 50,
 ) -> dict:
     try:
+        if month is not None and customer.project_id == request.app.state.settings.customer_demo_project_id:
+            # Explicit month selection shows confirmed bills even when estimates come from a test snapshot.
+            with request.app.state.db.connect() as connection:
+                connection.execute("BEGIN")
+                confirmed = statements.confirmed_month_statement(
+                    connection, customer.project_id, month, page=page, page_size=page_size,
+                )
+            if confirmed is not None:
+                return confirmed
         with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
             if month is None:
                 today = snapshot_date or datetime.now(statements.BEIJING).date()

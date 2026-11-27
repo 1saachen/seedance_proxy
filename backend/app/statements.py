@@ -245,9 +245,9 @@ def month_statement(
         raise StatementError("future_month", "账期尚未开始")
     with _read_snapshot(connection):
         _require_project(connection, project_id)
-        existing = _find_month(connection, project_id, month)
+        existing = confirmed_month_statement(connection, project_id, month, page=page, page_size=page_size)
         if existing is not None:
-            return _frozen_payload(connection, existing, page, page_size)
+            return existing
 
         scope = _scope(connection, project_id, month_start)
         totals = _live_totals(connection, month_start, scope)
@@ -264,6 +264,13 @@ def confirmed_statement(
     _validate_page(page, page_size)
     statement = _find_statement(connection, project_id, statement_id)
     return _frozen_payload(connection, statement, page, page_size)
+
+
+def confirmed_month_statement(
+    connection: sqlite3.Connection, project_id: str, month: str, *, page: int, page_size: int,
+) -> dict | None:
+    statement = _find_month(connection, project_id, month)
+    return None if statement is None else _frozen_payload(connection, statement, page, page_size)
 
 
 def confirm_statement(

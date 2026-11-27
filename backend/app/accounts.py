@@ -261,35 +261,42 @@ def check_playground_key(
     return Response(status_code=204)
 
 
+def parse_credentials(credentials: Credentials) -> tuple[str, bytes]:
+    return _email(credentials.email), _password_bytes(credentials.password)
+
+
+def provision_customer(connection: sqlite3.Connection, email: str, password: bytes) -> tuple[CustomerPrincipal, str]:
+    customer = CustomerPrincipal(id=f"cus_{uuid4().hex}", email=email, project_id=f"prj_{uuid4().hex}")
+    password_hash = _hash_password(password)
+    created_at = _now()
+    connection.execute("INSERT INTO projects (id, created_at) VALUES (?, ?)", (customer.project_id, created_at))
+    result = connection.execute(
+        """
+        INSERT INTO customer_accounts (id, email, project_id, password_hash, created_at)
+        VALUES (?, ?, ?, ?, ?) ON CONFLICT (email) DO NOTHING
+        """,
+        (customer.id, customer.email, customer.project_id, password_hash, created_at),
+    )
+    if not result.rowcount:
+        raise _error(409, "email_unavailable", "无法使用该邮箱注册")
+    return customer, created_at
+
+
 @router.post("/register", status_code=201)
 def register(credentials: Credentials, request: Request, response: Response) -> dict:
     if not request.app.state.settings.registration_enabled:
         raise _error(403, "registration_disabled", "当前未开放自助注册")
-    email = _email(credentials.email)
-    password = _password_bytes(credentials.password)
+    email, password = parse_credentials(credentials)
     _consume_auth_attempt(request, "register")
-    customer = CustomerPrincipal(id=f"cus_{uuid4().hex}", email=email, project_id=f"prj_{uuid4().hex}")
-    password_hash = _hash_password(password)
-    created_at = _now()
     with request.app.state.db.connect() as connection:
-        connection.execute("INSERT INTO projects (id, created_at) VALUES (?, ?)", (customer.project_id, created_at))
-        result = connection.execute(
-            """
-            INSERT INTO customer_accounts (id, email, project_id, password_hash, created_at)
-            VALUES (?, ?, ?, ?, ?) ON CONFLICT (email) DO NOTHING
-            """,
-            (customer.id, customer.email, customer.project_id, password_hash, created_at),
-        )
-        if not result.rowcount:
-            raise _error(409, "email_unavailable", "无法使用该邮箱注册")
+        customer, _ = provision_customer(connection, email, password)
         token = _new_session(connection, customer.id, _session_token(request))
     return _session_response(request, response, customer, token)
 
 
 @router.post("/login")
 def login(credentials: Credentials, request: Request, response: Response) -> dict:
-    email = _email(credentials.email)
-    password = _password_bytes(credentials.password)
+    email, password = parse_credentials(credentials)
     _consume_auth_attempt(request, "login", email)
     with request.app.state.db.connect() as connection:
         record = connection.execute(
@@ -328,17 +335,21 @@ def _public_key(row: sqlite3.Row | dict) -> dict:
     }
 
 
+def project_keys(connection: sqlite3.Connection, project_id: str) -> list[dict]:
+    keys = connection.execute(
+        """
+        SELECT id, name, prefix, created_at, revoked_at FROM business_keys
+        WHERE project_id = ? ORDER BY created_at DESC, id DESC
+        """,
+        (project_id,),
+    )
+    return [_public_key(key) for key in keys]
+
+
 @router.get("/keys")
 def list_keys(request: Request, customer: CurrentCustomer) -> dict:
     with request.app.state.db.connect() as connection:
-        keys = connection.execute(
-            """
-            SELECT id, name, prefix, created_at, revoked_at FROM business_keys
-            WHERE project_id = ? ORDER BY created_at DESC, id DESC
-            """,
-            (customer.project_id,),
-        ).fetchall()
-    return {"keys": [_public_key(key) for key in keys]}
+        return {"keys": project_keys(connection, customer.project_id)}
 
 
 @router.post("/keys", status_code=201)

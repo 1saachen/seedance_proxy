@@ -132,6 +132,8 @@ def test_test_project_uses_the_snapshot_through_normal_customer_reads(tmp_path):
         statement_url = f"{BILLING}/{real_statement['id']}"
         published = client.get(statement_url, headers=session).json()
         assert published["status"] == "confirmed" and published["summary"]["payableAmount"] == "0.00"
+        selected_month = client.get(BILLING, params={"month": MONTH}, headers=session)
+        assert selected_month.status_code == 200 and selected_month.json() == published
         export = client.get(statement_url + "/export.csv", headers=session)
         assert export.status_code == 200 and "vid_preview" not in export.text
         with app.state.db.connect() as connection:

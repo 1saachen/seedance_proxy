@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from . import (
-    accounts, asset_liveness, asset_presets, assets, billing, customer_billing, customer_tasks, model_api,
-    provider_costs, statements, upload_registration, uploads, usage, video_callbacks, video_task_management,
+    accounts, admin_auth, admin_operations, asset_liveness, asset_presets, assets, billing, customer_billing,
+    customer_tasks, model_api, provider_costs, statements, upload_registration, uploads, usage, video_callbacks,
+    video_task_management,
 )
 from .config import Settings
 from .db import Database
@@ -18,6 +19,18 @@ from .upload_storage import LocalUploadStorage, UploadStorage
 
 ARK_ORIGIN = "https://ark.cn-beijing.volces.com"
 logger = logging.getLogger(__name__)
+
+
+class _AdminAccessFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        return not (
+            isinstance(args, tuple) and len(args) == 5
+            and str(args[2]).split("?", 1)[0].startswith("/api/admin/")
+        )
+
+
+_admin_access_filter = _AdminAccessFilter()
 
 
 def _reconcile_video_charges(database: Database) -> None:
@@ -55,6 +68,7 @@ def create_app(
         with database.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             accounts.initialize(connection)
+            admin_auth.init_schema(connection)
             assets.initialize(connection)
             model_api.initialize(connection)
             video_task_management.initialize(connection)
@@ -100,6 +114,7 @@ def create_app(
 
     app = FastAPI(title="richproxy", version="0.1.0", lifespan=lifespan)
     upload_registration.redact_source_access_log()
+    logging.getLogger("uvicorn.access").addFilter(_admin_access_filter)
     app.state.settings = settings
     app.state.db = database
 
@@ -111,10 +126,12 @@ def create_app(
         )
 
     @app.middleware("http")
-    async def protect_customer_response(request: Request, call_next):
+    async def protect_api_response(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/api/customer/", "/api/v3/", "/api/asset/", "/api/asset-group/")):
+        if request.url.path.startswith(("/api/admin/", "/api/customer/", "/api/v3/", "/api/asset/", "/api/asset-group/")):
             response.headers["Cache-Control"] = "no-store"
+        if request.url.path.startswith("/api/admin/"):
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
         return response
 
     @app.get("/health")
@@ -122,6 +139,8 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(accounts.router)
+    app.include_router(admin_auth.router)
+    app.include_router(admin_operations.router)
     app.include_router(assets.router)
     app.include_router(asset_liveness.router)
     app.include_router(asset_presets.router)
