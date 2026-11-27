@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from . import statements
 from .accounts import CustomerPrincipal, require_customer
-from .customer_demo import customer_read_scope, demo_snapshot_date, demo_unavailable
+from .customer_demo import customer_read_scope, usage_unavailable
 
 
 router = APIRouter(prefix="/api/customer/billing", tags=["Customer billing"])
@@ -29,21 +29,18 @@ def _http_error(error: statements.StatementError) -> HTTPException:
 @router.get("")
 def billing_month(
     request: Request, customer: Customer, month: Month = None, page: Page = 1, page_size: PageSize = 50,
-    demo: bool = False,
 ) -> dict:
     try:
-        with customer_read_scope(request, customer.project_id, demo) as (connection, project_id):
+        with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
             if month is None:
-                today = (demo_snapshot_date(connection) if demo else None) or datetime.now(statements.BEIJING).date()
+                today = snapshot_date or datetime.now(statements.BEIJING).date()
                 month = today.strftime("%Y-%m")
             connection.execute("BEGIN")
             statement = statements.month_statement(connection, project_id, month, page=page, page_size=page_size)
+            if snapshot_date is not None and (statement["status"] != "estimate" or statement["id"] is not None):
+                raise usage_unavailable()
     except statements.StatementError as error:
         raise _http_error(error) from None
-    if demo:
-        if statement["status"] != "estimate" or statement["id"] is not None:
-            raise demo_unavailable()
-        statement["demo"] = True
     return statement
 
 

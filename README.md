@@ -175,7 +175,7 @@ Invoke-RestMethod -Method Post -Uri "$env:BASE_URL/api/asset/create" `
 
 可用 `day=YYYY-MM-DD` 筛选北京时间的任务创建日期。只传 `day` 时按该日期确定月份。明细支持 `page`、`pageSize` 分页，默认每页 100 条，最多 100 条。`summary.calls` 统计全部符合筛选条件的调用。添加 `includeTrend=true` 时，响应附带 `spendTrend`。它按北京时间的任务创建日统计最近 7 日，与列表筛选及分页独立。金额只汇总已计价的折后费用，待计价调用单独计数。没有已计价明细时金额为 `null`，实际已计价零元为 `"0.000000"`。
 
-指定的测试项目可在已登录的工作台切换「模拟用量」。由服务端的 `SEEDANCE_CUSTOMER_DEMO_PROJECT_ID` 指定项目，`SEEDANCE_CUSTOMER_DEMO_DATABASE_PATH` 指向一份独立的只读 SQLite 测试快照。工作台仅为该项目的用量与账单预估请求附加 `demo=true`。模拟页面有独立提示，使用样本的日期范围，可随时返回真实用量。
+指定的测试项目可通过普通工作台页面验收用量与账单预估。由服务端的 `SEEDANCE_CUSTOMER_DEMO_PROJECT_ID` 指定项目，`SEEDANCE_CUSTOMER_DEMO_DATABASE_PATH` 指向一份独立的只读 SQLite 测试快照。该项目的用量明细、七日趋势和月度预估通过普通查询读取测试快照，正式账单、导出和其他客户仍使用真实数据。
 
 ### 配置价目与项目折扣
 

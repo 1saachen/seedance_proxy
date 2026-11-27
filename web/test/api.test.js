@@ -60,36 +60,6 @@ test('monthly statements are paginated same-origin reads with a scoped CSV path'
   assert.equal(customerApi.billingExportUrl(null), null);
 });
 
-test('demo query is sent only for opted-in usage and monthly estimates', async (t) => {
-  const fetch = t.mock.method(globalThis, 'fetch', async (path) =>
-    json(path.includes('demo=true') ? { demo: true } : {}),
-  );
-  const { signal } = new AbortController();
-  await customerApi.usage('2026-12', signal, { pageSize: 1, includeTrend: true, demo: true });
-  await customerApi.usage('2026-11', signal, { day: '2026-11-30', page: 2, pageSize: 50, demo: true });
-  await customerApi.billing('2026-11', 2, signal, { demo: true });
-  await customerApi.billing('2026-11', 1, signal);
-  await customerApi.tasks({ page: 1 }, signal);
-
-  assert.deepEqual(fetch.mock.calls.map(({ arguments: [path] }) => path), [
-    '/api/customer/usage?month=2026-12&pageSize=1&includeTrend=true&demo=true',
-    '/api/customer/usage?month=2026-11&day=2026-11-30&page=2&pageSize=50&demo=true',
-    '/api/customer/billing?month=2026-11&page=2&pageSize=50&demo=true',
-    '/api/customer/billing?month=2026-11&page=1&pageSize=50',
-    '/api/customer/tasks?page=1&pageSize=20',
-  ]);
-});
-
-test('usage and estimates reject data from the wrong mode', async (t) => {
-  t.mock.method(globalThis, 'fetch', async (path) =>
-    json(path.includes('demo=true') ? {} : { demo: true }),
-  );
-  await assert.rejects(customerApi.usage('2026-11', undefined, { demo: true }), ApiError);
-  await assert.rejects(customerApi.billing('2026-11', 1, undefined, { demo: true }), ApiError);
-  await assert.rejects(customerApi.usage('2026-11'), ApiError);
-  await assert.rejects(customerApi.billing('2026-11', 1), ApiError);
-});
-
 test('API Key changes and logout send CSRF and never use a bearer secret', async (t) => {
   const credential = 'fixture-only';
   const created = { key: { id: 'key_any' }, secret: 'fixture-secret' };

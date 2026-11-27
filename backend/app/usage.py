@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .accounts import CustomerPrincipal, require_customer
-from .customer_demo import customer_read_scope, demo_snapshot_date
+from .customer_demo import customer_read_scope
 
 
 router = APIRouter(prefix="/api/customer", tags=["Customer usage"])
@@ -103,10 +103,9 @@ def customer_usage(
     include_trend: Annotated[bool, Query(alias="includeTrend")] = False,
     page: Annotated[int, Query(ge=1, le=1_000_000)] = 1,
     page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 100,
-    demo: bool = False,
 ):
-    with customer_read_scope(request, customer.project_id, demo) as (connection, project_id):
-        today = (demo_snapshot_date(connection) if demo else None) or datetime.now(SHANGHAI).date()
+    with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
+        today = snapshot_date or datetime.now(SHANGHAI).date()
         if day is not None:
             try:
                 start = date.fromisoformat(day)
@@ -150,6 +149,5 @@ def customer_usage(
         "summary": dict(totals),
         "items": [_usage_item(row) for row in records],
         **({"day": day} if day is not None else {}),
-        **({"demo": True} if demo else {}),
         **trend,
     }

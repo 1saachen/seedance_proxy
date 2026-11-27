@@ -26,13 +26,6 @@ async function request(path, { method = 'GET', body, csrfToken, bearerKey, signa
   return response.json();
 }
 
-async function readUsage(path, query, signal, demo) {
-  if (demo) query.set('demo', 'true');
-  const data = await request(`${path}?${query}`, { signal });
-  if (demo !== (data?.demo === true)) throw new ApiError(404);
-  return data;
-}
-
 export const customerApi = {
   me: (signal) => request('/me', { signal }),
   login: (body) => request('/login', { method: 'POST', body }),
@@ -49,15 +42,14 @@ export const customerApi = {
     }
     return request(`/tasks?${query}`, { signal });
   },
-  usage: (month, signal, { day, page, pageSize, includeTrend, demo = false } = {}) => {
+  usage: (month, signal, { day, page, pageSize, includeTrend } = {}) => {
     const query = new URLSearchParams({ month });
     for (const [name, value] of Object.entries({ day, page, pageSize, includeTrend })) {
       if (value != null) query.set(name, value);
     }
-    return readUsage('/usage', query, signal, demo);
+    return request(`/usage?${query}`, { signal });
   },
-  billing: (month, page, signal, { demo = false } = {}) =>
-    readUsage('/billing', new URLSearchParams({ month, page, pageSize: 50 }), signal, demo),
+  billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
   billingExportUrl: (id) =>
     typeof id === 'string' && /^stmt_[0-9a-f]{32}$/.test(id) ? `${customerPath}/billing/${id}/export.csv` : null,
 };

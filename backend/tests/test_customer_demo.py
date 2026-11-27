@@ -23,7 +23,7 @@ BILLING = "/api/customer/billing"
 
 def _app(path):
     def deny_upstream(request):
-        pytest.fail(f"Demo tests must not call upstream: {request.method}")
+        pytest.fail(f"Fixture tests must not call upstream: {request.method}")
 
     mock = httpx.MockTransport(deny_upstream)
     return create_app(Settings(
@@ -36,7 +36,7 @@ def _app(path):
 def _register(client, name):
     credentials = {"email": f"{name}@example.test", "password": "Synthetically-Generated-42"}
     response = client.post("/api/customer/register", json=credentials)
-    assert response.status_code == 201 and "demoUsageAvailable" not in response.json()
+    assert response.status_code == 201
     project = response.json()["customer"]["projectId"]
     session = {"Cookie": f"{SESSION_COOKIE}={client.cookies[SESSION_COOKIE]}"}
     client.cookies.clear()
@@ -85,59 +85,68 @@ def _snapshot(tmp_path, real_project, *, confirm=False):
     return path
 
 
-def test_preview_requires_a_matching_customer_and_reads_only_the_snapshot(tmp_path):
+def test_test_project_uses_the_snapshot_through_normal_customer_reads(tmp_path):
     app = _app(tmp_path / "live.sqlite")
     with TestClient(app) as client:
         project, session, credentials = _register(client, "test-account")
-        _, other, _ = _register(client, "ordinary-customer")
+        other_project, other, _ = _register(client, "ordinary-customer")
         with app.state.db.connect() as connection:
             _seed(connection, project, "vid_live")
+            _seed(connection, other_project, "vid_other_live")
+            real_statement = statements.confirm_statement(
+                connection, project, MONTH, now=datetime(2025, 3, 1, tzinfo=UTC),
+            )
         snapshot = _snapshot(tmp_path, project)
         app.state.settings.customer_demo_project_id = project
         app.state.settings.customer_demo_database_path = snapshot
 
-        assert "demoUsageAvailable" not in client.get("/api/customer/me", headers=other).json()
         for endpoint in (USAGE, BILLING):
-            assert client.get(endpoint, params={"demo": "true"}).status_code == 401
-            denied = client.get(endpoint, params={"demo": "true"}, headers=other)
-            assert denied.status_code == 404 and denied.json()["detail"]["code"] == "demo_usage_unavailable"
+            assert client.get(endpoint).status_code == 401
 
         login = client.post("/api/customer/login", json=credentials)
         assert login.status_code == 200
         for payload in (login.json(), client.get("/api/customer/me", headers=session).json()):
-            assert payload["demoUsageAvailable"] is True and payload["demoUsageMonth"] == MONTH
+            assert set(payload) == {"customer", "csrfToken"}
         client.cookies.clear()
 
-        default = client.get(USAGE, params={"demo": "true", "includeTrend": "true"}, headers=session)
+        default = client.get(USAGE, params={"includeTrend": "true"}, headers=session)
         assert default.status_code == 200 and default.headers["Cache-Control"] == "no-store"
         content = default.json()
-        assert content["demo"] is True and content["month"] == MONTH
+        assert "demo" not in content and content["month"] == MONTH
         assert [item["id"] for item in content["items"]] == ["vid_preview"]
         assert content["spendTrend"]["totalAmount"] == "0.750000"
         assert len(content["spendTrend"]["days"]) == 7 and content["spendTrend"]["days"][-1]["date"] == DAY
-        chosen = client.get(USAGE, params={"demo": "true", "day": DAY}, headers=session).json()
+        chosen = client.get(USAGE, params={"day": DAY}, headers=session).json()
         assert chosen["day"] == DAY and chosen["items"][0]["billing"]["amount"] == "0.750000"
-        estimate = client.get(BILLING, params={"demo": "true"}, headers=session).json()
-        assert estimate["demo"] is True and estimate["status"] == "estimate" and estimate["id"] is None
+        estimate = client.get(BILLING, headers=session).json()
+        assert "demo" not in estimate and estimate["status"] == "estimate" and estimate["id"] is None
         assert estimate["summary"]["payableAmount"] == "0.75" and estimate["summary"]["usageCalls"] == 1
 
-        actual = client.get(USAGE, params={"demo": "false", "month": MONTH}, headers=session).json()
-        assert "demo" not in actual and [item["id"] for item in actual["items"]] == ["vid_live"]
-        assert actual["items"][0]["billing"]["status"] == "unbilled"
-        actual_estimate = client.get(BILLING, params={"month": MONTH}, headers=session).json()
-        assert "demo" not in actual_estimate and actual_estimate["summary"]["payableAmount"] == "0.00"
+        other_usage = client.get(USAGE, params={"month": MONTH, "demo": "true"}, headers=other).json()
+        assert [item["id"] for item in other_usage["items"]] == ["vid_other_live"]
+        assert other_usage["items"][0]["billing"]["status"] == "unbilled"
+        other_estimate = client.get(BILLING, params={"month": MONTH}, headers=other).json()
+        assert other_estimate["summary"]["payableAmount"] == "0.00"
+        tasks = client.get("/api/customer/tasks", headers=session).json()
+        assert [item["id"] for item in tasks["items"]] == ["vid_live"]
+        statement_url = f"{BILLING}/{real_statement['id']}"
+        published = client.get(statement_url, headers=session).json()
+        assert published["status"] == "confirmed" and published["summary"]["payableAmount"] == "0.00"
+        export = client.get(statement_url + "/export.csv", headers=session)
+        assert export.status_code == 200 and "vid_preview" not in export.text
         with app.state.db.connect() as connection:
-            assert connection.execute("SELECT COUNT(*) FROM video_charges").fetchone()[0] == 1
+            assert connection.execute("SELECT COUNT(*) FROM video_charges").fetchone()[0] == 2
         assert not snapshot.with_name(snapshot.name + "-wal").exists()
         assert not snapshot.with_name(snapshot.name + "-shm").exists()
 
 
 @pytest.mark.parametrize("kind", ["missing", "same-file", "invalid"])
-def test_preview_fails_closed_if_snapshot_is_unavailable_or_aliases_live_data(tmp_path, kind):
+def test_test_project_fails_closed_if_snapshot_is_unavailable_or_aliases_live_data(tmp_path, kind):
     live = tmp_path / "live.sqlite"
     app = _app(live)
     with TestClient(app) as client:
         project, session, _ = _register(client, "test-account")
+        _, other, _ = _register(client, "ordinary-customer")
         fixture = tmp_path / "preview.sqlite"
         if kind == "same-file":
             os.link(live, fixture)
@@ -145,18 +154,19 @@ def test_preview_fails_closed_if_snapshot_is_unavailable_or_aliases_live_data(tm
             fixture.write_text("not a standalone SQLite database")
         app.state.settings.customer_demo_project_id = project
         app.state.settings.customer_demo_database_path = fixture
-        assert "demoUsageAvailable" not in client.get("/api/customer/me", headers=session).json()
+        assert client.get("/api/customer/me", headers=session).status_code == 200
         for endpoint in (USAGE, BILLING):
-            response = client.get(endpoint, params={"demo": "true"}, headers=session)
-            assert response.status_code == 404 and response.json()["detail"]["code"] == "demo_usage_unavailable"
+            response = client.get(endpoint, headers=session)
+            assert response.status_code == 503 and response.json()["detail"]["code"] == "usage_unavailable"
+            assert client.get(endpoint, headers=other).status_code == 200
         assert fixture.exists() == (kind != "missing")
 
 
-def test_preview_month_never_returns_a_frozen_invoice(tmp_path):
+def test_snapshot_never_returns_a_frozen_invoice(tmp_path):
     app = _app(tmp_path / "live.sqlite")
     with TestClient(app) as client:
         project, session, _ = _register(client, "test-account")
         app.state.settings.customer_demo_project_id = project
         app.state.settings.customer_demo_database_path = _snapshot(tmp_path, project, confirm=True)
-        response = client.get(BILLING, params={"demo": "true"}, headers=session)
-        assert response.status_code == 404 and response.json()["detail"]["code"] == "demo_usage_unavailable"
+        response = client.get(BILLING, headers=session)
+        assert response.status_code == 503 and response.json()["detail"]["code"] == "usage_unavailable"

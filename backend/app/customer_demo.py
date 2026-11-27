@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 DEMO_PROJECT_ID = "prj_mock_workbench"
 
 
-def _demo_database_path(settings: Settings, project_id: str) -> Path | None:
+def _demo_database_path(settings: Settings) -> Path | None:
     path = settings.customer_demo_database_path
-    if path is None or project_id != settings.customer_demo_project_id:
+    if path is None:
         return None
     try:
         path = path.resolve(strict=True)
@@ -38,46 +38,33 @@ def _demo_connection(path: Path) -> Iterator[sqlite3.Connection]:
         yield connection
 
 
-def demo_snapshot_date(connection: sqlite3.Connection) -> date | None:
+def _snapshot_date(connection: sqlite3.Connection) -> date:
     newest = connection.execute("""
         SELECT MAX(date(created_at, '+08:00')) FROM video_tasks WHERE project_id = ?
     """, (DEMO_PROJECT_ID,)).fetchone()[0]
     try:
-        return date.fromisoformat(newest) if newest else None
+        return date.fromisoformat(newest or "")
     except ValueError:
         raise sqlite3.DataError("Invalid demo snapshot date") from None
 
 
-def demo_session_info(settings: Settings, project_id: str) -> dict:
-    path = _demo_database_path(settings, project_id)
-    if path is None:
-        return {}
-    try:
-        with _demo_connection(path) as connection:
-            newest = demo_snapshot_date(connection)
-    except sqlite3.Error:
-        return {}
-    if newest is None:
-        return {"demoUsageAvailable": True}
-    return {"demoUsageAvailable": True, "demoUsageMonth": newest.strftime("%Y-%m")}
-
-
-def demo_unavailable() -> HTTPException:
-    return HTTPException(404, {"code": "demo_usage_unavailable", "message": "当前无法查看模拟用量"})
+def usage_unavailable() -> HTTPException:
+    return HTTPException(503, {"code": "usage_unavailable", "message": "暂时无法读取用量，请稍后重试"})
 
 
 @contextmanager
-def customer_read_scope(request: Request, project_id: str, demo: bool) -> Iterator[tuple[sqlite3.Connection, str]]:
-    if not demo:
+def customer_read_scope(request: Request, project_id: str) -> Iterator[tuple[sqlite3.Connection, str, date | None]]:
+    settings = request.app.state.settings
+    if project_id != settings.customer_demo_project_id:
         with request.app.state.db.connect() as connection:
-            yield connection, project_id
+            yield connection, project_id, None
         return
 
-    path = _demo_database_path(request.app.state.settings, project_id)
+    path = _demo_database_path(settings)
     if path is None:
-        raise demo_unavailable()
+        raise usage_unavailable()
     try:
         with _demo_connection(path) as connection:
-            yield connection, DEMO_PROJECT_ID
+            yield connection, DEMO_PROJECT_ID, _snapshot_date(connection)
     except sqlite3.Error:
-        raise demo_unavailable() from None
+        raise usage_unavailable() from None

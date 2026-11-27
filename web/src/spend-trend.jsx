@@ -30,7 +30,7 @@ function modelColor(model) {
   return Object.hasOwn(modelColors, model) ? modelColors[model] : '#63778d';
 }
 
-function SpendDay({ day, limit, href }) {
+function SpendDay({ day, limit }) {
   const { date, amount, models, pendingCalls, pricedCalls } = day;
   const dayLabel = `${Number(date.slice(5, 7))}/${Number(date.slice(8))}`;
   const amountLabel = amount == null ? '暂无已计价费用' : `已计价 ${yuan(amount)}`;
@@ -38,7 +38,7 @@ function SpendDay({ day, limit, href }) {
   const breakdown = models.map(({ model, amount: modelAmount }) => `${model} ${yuan(modelAmount)}`);
   const details = [date, amountLabel, countLabel, ...breakdown].join('，');
   return (
-    <a className="spend-day" href={href} aria-label={`${details}。查看调用明细`}>
+    <a className="spend-day" href={`#billing?day=${date}`} aria-label={`${details}。查看调用明细`}>
       <span className="spend-track" aria-hidden="true">
         {limit > 0 &&
           models.map(
@@ -69,7 +69,7 @@ function SpendDay({ day, limit, href }) {
   );
 }
 
-export function SpendTrend({ trend, dayHref }) {
+export function SpendTrend({ trend }) {
   if (!trend?.days.length) return <p className="empty">暂无费用趋势数据。</p>;
   const { days, totalAmount } = trend;
   const { limit, ticks } = scaleFor(days);
@@ -98,7 +98,7 @@ export function SpendTrend({ trend, dayHref }) {
           </div>
           <div className="spend-days" role="group" aria-label="每日折后费用，按模型堆叠">
             {days.map((day) => (
-              <SpendDay key={day.date} day={day} limit={limit} href={dayHref(day.date)} />
+              <SpendDay key={day.date} day={day} limit={limit} />
             ))}
           </div>
         </div>
