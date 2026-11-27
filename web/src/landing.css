@@ -97,6 +97,40 @@
   margin-top: 1.5rem;
 }
 
+.landing-artwork {
+  overflow: hidden;
+  border: 1px solid var(--landing-line);
+  border-radius: 0.85rem;
+  background: var(--landing-tint);
+  box-shadow: 0 0.9rem 2.5rem -1.5rem #233e6e78;
+}
+
+.landing-artwork img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.landing-artwork figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.65rem;
+  padding: 0.72rem 0.9rem;
+  color: var(--landing-quiet);
+  font-size: 0.82rem;
+}
+
+.landing-artwork figcaption strong {
+  color: var(--landing-ink);
+}
+
+.landing-workflow {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  align-items: start;
+  gap: clamp(1.35rem, 5vw, 4.5rem);
+}
+
 .landing-terminal {
   display: grid;
   min-width: 0;
@@ -116,7 +150,7 @@
   padding: 0.55rem 0.9rem;
 }
 
-.terminal-heading h2 {
+.terminal-heading h3 {
   font-size: 0.95rem;
   font-weight: 730;
 }
@@ -174,12 +208,13 @@
   min-height: 14.7rem;
 }
 
-.terminal-example h3 {
+.terminal-example h4 {
+  margin: 0;
   padding: 0.8rem 1rem 0;
   font-size: 0.85rem;
 }
 
-.landing-terminal.has-tabs .terminal-example h3 {
+.landing-terminal.has-tabs .terminal-example h4 {
   display: none;
 }
 
@@ -311,8 +346,7 @@
 
 .landing-steps {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: clamp(1rem, 3vw, 2rem);
+  gap: 1.3rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -395,7 +429,8 @@
 }
 
 @media (max-width: 53rem) {
-  .landing-hero {
+  .landing-hero,
+  .landing-workflow {
     grid-template-columns: minmax(0, 1fr);
     gap: 1.65rem;
   }
@@ -410,7 +445,6 @@
     width: calc(100% - 2rem);
   }
 
-  .landing-steps,
   .landing-faq {
     grid-template-columns: minmax(0, 1fr);
   }

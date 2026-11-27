@@ -36,49 +36,78 @@
           <p>在应用里提交视频生成任务、查询进度并获取结果。在 richproxy 工作台管理项目密钥和调用用量。</p>
           <div class="hero-actions">
             <a class="button primary" href="/console/">进入工作台</a>
-            <a class="button secondary" href="/docs/#quickstart">快速接入指南</a>
+            <a class="button secondary" href="#quickstart">快速接入指南</a>
           </div>
         </div>
 
-        <section class="landing-terminal" aria-labelledby="example-title">
-          <div class="terminal-heading">
-            <h2 id="example-title">请求示例</h2>
-            <button class="terminal-copy" type="button" hidden>复制命令</button>
-          </div>
-          <div class="terminal-tabs" role="tablist" aria-label="请求类型" hidden>
-            <button id="tab-create" type="button" role="tab" aria-controls="example-create" aria-selected="true">创建视频</button>
-            <button id="tab-models" type="button" role="tab" aria-controls="example-models" aria-selected="false" tabindex="-1">列出模型</button>
-            <button id="tab-query" type="button" role="tab" aria-controls="example-query" aria-selected="false" tabindex="-1">查询任务</button>
-          </div>
-          <div class="terminal-examples">
-            <div id="example-create" class="terminal-example">
-              <h3>创建视频</h3>
-              <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks" \
+        <figure class="landing-artwork">
+          <img src="/seedance-tram.webp" alt="雨后的坡道上，一辆电车开向暮色中的海岸城镇" width="1279" height="720" fetchpriority="high" />
+          <figcaption><strong>提示词示例</strong><span>雨后蓝调时刻，镜头跟随一辆电车驶过海滨街道。</span></figcaption>
+        </figure>
+      </section>
+
+      <section class="landing-section" id="quickstart" aria-labelledby="quickstart-title">
+        <div class="landing-section-head">
+          <div><h2 id="quickstart-title">从 Key 到生成结果</h2></div>
+        </div>
+        <div class="landing-workflow">
+          <ol class="landing-steps" role="list">
+            <li>
+              <h3>创建 API Key</h3>
+              <p>在<a href="/console/">工作台</a>签发项目 Key。从服务器环境变量读取它，再通过 <code>GET /v1/models</code> 确认可用模型。</p>
+            </li>
+            <li>
+              <h3>提交视频任务</h3>
+              <p>准备文本提示词或<a href="/docs/#assets">已登记的参考素材</a>。遇到断线时，沿用原请求和原 <code>Idempotency-Key</code> 重试。</p>
+            </li>
+            <li>
+              <h3>查询并下载</h3>
+              <p>使用原 Key 和任务 ID <a href="/docs/#tasks">查询状态</a>，并在结果链接有效期内下载视频。</p>
+            </li>
+          </ol>
+          <section class="landing-terminal" aria-labelledby="example-title">
+            <div class="terminal-heading">
+              <h3 id="example-title">请求示例</h3>
+              <button class="terminal-copy" type="button" hidden>复制命令</button>
+            </div>
+            <div class="terminal-tabs" role="tablist" aria-label="请求类型" hidden>
+              <button id="tab-create" type="button" role="tab" aria-controls="example-create" aria-selected="true">创建视频</button>
+              <button id="tab-models" type="button" role="tab" aria-controls="example-models" aria-selected="false" tabindex="-1">列出模型</button>
+              <button id="tab-query" type="button" role="tab" aria-controls="example-query" aria-selected="false" tabindex="-1">查询任务</button>
+            </div>
+            <div class="terminal-examples">
+              <div id="example-create" class="terminal-example">
+                <h4>创建视频</h4>
+                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $REQUEST_ID" \
   -d '{
     "model": "doubao-seedance-2.5",
-    "content": [{"type": "text", "text": "日出时掠过海面的航拍"}],
+    "content": [{
+      "type": "text",
+      "text": "雨后蓝调时刻，镜头跟随一辆电车驶过海滨街道。"
+    }],
     "duration": 5
   }'</code></pre>
-            </div>
-            <div id="example-models" class="terminal-example">
-              <h3>列出模型</h3>
-              <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/v1/models" \
+              </div>
+              <div id="example-models" class="terminal-example">
+                <h4>列出模型</h4>
+                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/v1/models" \
   -H "Authorization: Bearer $API_KEY"</code></pre>
-            </div>
-            <div id="example-query" class="terminal-example">
-              <h3>查询任务</h3>
-              <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
+              </div>
+              <div id="example-query" class="terminal-example">
+                <h4>查询任务</h4>
+                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
   -H "Authorization: Bearer $API_KEY"</code></pre>
+              </div>
             </div>
-          </div>
-          <div class="terminal-footer">
-            <div>接入地址 <code data-api-origin>站点 HTTPS 地址</code></div>
-            <span class="terminal-feedback" role="status"></span>
-          </div>
-        </section>
+            <div class="terminal-footer">
+              <div>接入地址 <code data-api-origin>站点 HTTPS 地址</code></div>
+              <span class="terminal-feedback" role="status"></span>
+            </div>
+          </section>
+        </div>
       </section>
 
       <section class="landing-section" id="models" aria-labelledby="models-title">
@@ -115,26 +144,6 @@
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section class="landing-section" id="quickstart" aria-labelledby="quickstart-title">
-        <div class="landing-section-head">
-          <div><h2 id="quickstart-title">从 Key 到生成结果</h2></div>
-        </div>
-        <ol class="landing-steps" role="list">
-          <li>
-            <h3>创建 API Key</h3>
-            <p>在<a href="/console/">工作台</a>签发项目 Key。从服务器环境变量读取它，再通过 <code>GET /v1/models</code> 确认可用模型。</p>
-          </li>
-          <li>
-            <h3>提交视频任务</h3>
-            <p>准备文本提示词或<a href="/docs/#assets">已登记的参考素材</a>。遇到断线时，沿用原请求和原 <code>Idempotency-Key</code> 重试。</p>
-          </li>
-          <li>
-            <h3>查询并下载</h3>
-            <p>使用原 Key 和任务 ID <a href="/docs/#tasks">查询状态</a>，并在结果链接有效期内下载视频。</p>
-          </li>
-        </ol>
       </section>
 
       <section class="landing-section landing-faq" aria-labelledby="faq-title">
