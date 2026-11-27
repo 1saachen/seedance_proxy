@@ -13,7 +13,7 @@ import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from . import billing
+from . import billing, key_limits
 from .accounts import BusinessPrincipal, require_business_key
 from .asset_presets import is_preset_reference, translate_preset
 from .assets import is_asset_reference, is_public_https, translate_reference
@@ -406,6 +406,15 @@ def list_models(request: Request, principal: Principal):
     }
 
 
+def _previous_submission(
+    connection: sqlite3.Connection, principal: BusinessPrincipal, idempotency_hash: str,
+) -> sqlite3.Row | None:
+    return connection.execute(
+        "SELECT * FROM video_tasks WHERE project_id = ? AND key_id = ? AND idempotency_key = ?",
+        (principal.project_id, principal.key_id, idempotency_hash),
+    ).fetchone()
+
+
 @router.post(TASKS_PATH)
 async def create_task(
     request: Request,
@@ -432,10 +441,7 @@ async def create_task(
     idempotency_hash = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key is not None else None
     if idempotency_hash is not None:
         with request.app.state.db.connect() as connection:
-            existing = connection.execute(
-                "SELECT * FROM video_tasks WHERE project_id = ? AND key_id = ? AND idempotency_key = ?",
-                (principal.project_id, principal.key_id, idempotency_hash),
-            ).fetchone()
+            existing = _previous_submission(connection, principal, idempotency_hash)
         if existing is not None:
             return _replay(existing, fingerprint)
     if callback_url is not None and not request.app.state.settings.video_callback_poll_seconds:
@@ -448,26 +454,25 @@ async def create_task(
     ):
         await asyncio.to_thread(validate_inline_media, clean["content"])
     with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if idempotency_hash is not None:
+            existing = _previous_submission(connection, principal, idempotency_hash)
+            if existing is not None:
+                return _replay(existing, fingerprint)
+        key_limits.enforce_concurrency(connection, principal.key_id)
         result = connection.execute(
             """INSERT INTO video_tasks
                 (id, project_id, key_id, idempotency_key, request_hash, model, status,
                  requested_resolution, contains_video_input, upstream_model, is_draft, safety_identifier_hash)
                 SELECT ?, ?, ?, ?, ?, ?, 'submitting', ?, ?, ?, ?, ?
                 WHERE (SELECT COUNT(*) FROM video_tasks WHERE project_id = ?
-                       AND created_at >= DATETIME('now', '+8 hours', 'start of day', '-8 hours')) < ?
-                ON CONFLICT(key_id, idempotency_key) DO NOTHING""",
+                       AND created_at >= DATETIME('now', '+8 hours', 'start of day', '-8 hours')) < ?""",
             (task_id, principal.project_id, principal.key_id, idempotency_hash, fingerprint,
              payload.model, clean.get("resolution"), any(isinstance(item, VideoContent) for item in payload.content),
              upstream_model, bool(payload.draft), safety_identifier_hash,
              principal.project_id, request.app.state.settings.video_daily_limit),
         )
         if result.rowcount == 0:
-            existing = connection.execute(
-                "SELECT * FROM video_tasks WHERE project_id = ? AND key_id = ? AND idempotency_key = ?",
-                (principal.project_id, principal.key_id, idempotency_hash),
-            ).fetchone()
-            if existing is not None:
-                return _replay(existing, fingerprint)
             raise _error(429, "video_daily_limit", "Project reached its daily video submission limit")
         if callback_url is not None:
             register_callback(connection, task_id, callback_url)

@@ -3,7 +3,7 @@ import { adminApi } from './admin-api.js';
 import {
   beijingTime, DataTable, Dialog, LoadState, Message, Pager, useAdminMutation, useAdminQuery, yuan,
 } from './admin-ui.jsx';
-import { formatDate } from './workbench-format.jsx';
+import { formatDate, formatNumber } from './workbench-format.jsx';
 
 const auditActions = {
   'admin.created': '创建管理员',
@@ -12,6 +12,7 @@ const auditActions = {
   'auth.login_throttled': '管理员登录限流',
   'auth.logout': '管理员退出',
   'customer.create': '开通客户',
+  'key.limits.update': '调整业务 Key 限额',
   'billing.statement.confirm': '确认月账单',
   'billing.terms.create': '新增计费条款',
   'billing.price.create': '新增模型价目',
@@ -20,6 +21,7 @@ const auditActions = {
 const auditTargets = {
   admin: '管理员',
   project: '客户项目',
+  key: '业务 Key',
   statement: '月账单',
   price: '模型价目',
 };
@@ -37,9 +39,16 @@ const auditFields = {
   resolution: '输出分辨率',
   containsVideoInput: '包含视频输入',
   unitPrice: '单价',
+  before: '调整前',
+  after: '调整后',
 };
 
 function auditValue(key, value) {
+  if ((key === 'before' || key === 'after') && value && Object.hasOwn(value, 'concurrencyLimit')) {
+    const concurrency = value.concurrencyLimit == null ? '不限' : formatNumber(value.concurrencyLimit);
+    const rpm = value.rpmLimit == null ? '不限' : formatNumber(value.rpmLimit);
+    return '并发 ' + concurrency + '，RPM ' + rpm;
+  }
   if (key === 'effectiveAt') return formatDate(value);
   if (key === 'payableBps') return value / 100 + '%';
   if (key === 'payableAmount' || key === 'unitPrice') return yuan(value);

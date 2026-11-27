@@ -40,6 +40,8 @@ const failureMessages = {
   asset_provider_unavailable: '素材服务暂不可用，请稍后继续。',
   asset_submission_unknown: '素材服务尚未确认登记，请稍后继续核对。',
   asset_timeout: '参考素材仍在处理中，可继续查询。',
+  key_concurrency_exceeded: '当前业务 Key 已达到视频任务并发上限，请等已有任务结束后继续。',
+  key_rpm_exceeded: '当前业务 Key 请求过于频繁，请稍后继续。',
   provider_unavailable: '视频服务暂不可用，请稍后继续。',
   upload_expired: '文件暂存已过期，请重新开始并上传。',
   upload_in_progress: '文件暂存仍在处理中，请稍后继续。',
@@ -52,6 +54,9 @@ const failureMessages = {
 };
 
 function businessError(error) {
+  if (error.code === 'key_rpm_exceeded' && error.retryAfter) {
+    return `当前业务 Key 已达到每分钟请求上限，请在 ${error.retryAfter} 秒后继续。`;
+  }
   if (Object.hasOwn(failureMessages, error.code)) return failureMessages[error.code];
   switch (error.status) {
     case 401: return '业务 Key 已失效，请检查或更换 Key。';

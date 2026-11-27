@@ -44,3 +44,17 @@ test('changed statement amount is surfaced without replaying the confirmation', 
   });
   assert.equal(fetch.mock.callCount(), 1);
 });
+
+test('admin Key limit updates send both limits to the scoped path with CSRF', async (t) => {
+  const updated = { id: 'k_fixture', concurrencyLimit: null, rpmLimit: 45, activeTasks: 3, requestsLastMinute: 11 };
+  const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json(updated));
+
+  assert.deepEqual(await adminApi.updateKeyLimits('p/fixture', 'k/fixture', {
+    concurrencyLimit: null, rpmLimit: 45,
+  }, 'fixture-csrf'), updated);
+  const [[path, options]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  assert.equal(path, '/api/admin/projects/p%2Ffixture/keys/k%2Ffixture/limits');
+  assert.equal(options.method, 'PUT');
+  assert.equal(options.headers['X-CSRF-Token'], 'fixture-csrf');
+  assert.deepEqual(JSON.parse(options.body), { concurrencyLimit: null, rpmLimit: 45 });
+});

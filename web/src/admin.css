@@ -409,6 +409,31 @@
   font-variant-numeric: tabular-nums;
 }
 
+.admin-key-table {
+  min-width: 39rem;
+}
+
+.admin-key-table .button {
+  min-height: 2.2rem;
+  padding: 0.22rem 0.52rem;
+  font-size: inherit;
+}
+
+.admin-key-usage {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.admin-key-name {
+  overflow-wrap: anywhere;
+}
+
+.admin-key-name code {
+  margin-inline-start: 0.4rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .admin-attention {
   color: #865213;
 }

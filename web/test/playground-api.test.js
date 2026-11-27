@@ -13,6 +13,44 @@ const prompt = 'Fixture prompt';
 const makeRun = (media = []) => createVideoRun({ model, prompt, duration: 4, resolution: '480p', media });
 const json = (value, status = 200) => Response.json(value, { status });
 
+test('reports the RPM wait without replaying a blocked write or repeating completed upload checks', async (t) => {
+  const signal = new AbortController().signal;
+  const run = makeRun([{ kind: 'Image', file: new File(['fixture'], 'reference.png') }]);
+  const groupPath = '/api/asset-group/create';
+  const uploadPath = '/api/asset/upload-file';
+  const registerPath = '/api/asset/create';
+  const paths = [];
+  const blocked = () => Response.json({ detail: { code: 'key_rpm_exceeded' } }, {
+    status: 429, headers: { 'Retry-After': '42' },
+  });
+  const expected = [
+    [groupPath, blocked],
+    [groupPath, () => json({ group: { id: groupId } }, 201)],
+    [uploadPath, () => json({ uploadId: uploadId(1) }, 201)],
+    [registerPath, blocked],
+    [registerPath, () => json({ asset: { id: assetId(1) } }, 201)],
+    [`/api/asset/get?assetId=${assetId(1)}`, () => json({
+      asset: { id: assetId(1), status: 'Active', reference: `asset://${assetId(1)}` },
+    })],
+    [taskPath, () => json({ id: taskId })],
+  ];
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    const [expectedPath, response] = expected[paths.length] ?? [];
+    assert.equal(path, expectedPath);
+    if (path === taskPath) assert.equal(options.headers['Idempotency-Key'], run.requestId);
+    paths.push(path);
+    return response();
+  });
+  const submit = () => submitVideoRun(key, run, signal, () => {});
+  const rateLimited = (error) => error.code === 'key_rpm_exceeded' && error.retryAfter === 42;
+  await assert.rejects(submit, rateLimited);
+  assert.deepEqual(paths, [groupPath]);
+  await assert.rejects(submit, rateLimited);
+  assert.deepEqual(paths, [groupPath, groupPath, uploadPath, registerPath]);
+  assert.equal(await submit(), taskId);
+  assert.deepEqual(paths, expected.map(([path]) => path));
+});
+
 test('discovers live Seedance aliases and references staged images, videos and audio in the video request', async (t) => {
   const controller = new AbortController();
   const steps = [];

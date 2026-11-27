@@ -4,9 +4,9 @@ import sqlite3
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from . import accounts, billing, statements, usage
+from . import accounts, billing, key_limits, statements, usage
 from .admin_auth import CurrentAdmin, record_audit
 from .model_api import SEEDANCE_MODELS
 
@@ -47,6 +47,15 @@ class PriceChange(BaseModel):
     effective_at: str = Field(alias="effectiveAt", max_length=40)
     unit_price: str = Field(alias="unitPrice", pattern=r"^[0-9]{1,7}(\.[0-9]{1,6})?$")
     source: str = Field(min_length=1, max_length=200)
+
+
+class KeyLimitChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concurrency_limit: int | None = Field(
+        alias="concurrencyLimit", ge=1, le=key_limits.MAX_CONCURRENCY_LIMIT, strict=True,
+    )
+    rpm_limit: int | None = Field(alias="rpmLimit", ge=1, le=key_limits.MAX_RPM_LIMIT, strict=True)
 
 
 def _error(status: int, code: str, message: str) -> HTTPException:
@@ -126,7 +135,38 @@ def project_keys(project_id: str, request: Request, _: CurrentAdmin) -> dict:
     with request.app.state.db.connect() as connection:
         connection.execute("BEGIN")
         _require_project(connection, project_id)
-        return {"keys": accounts.project_keys(connection, project_id)}
+        keys = accounts.project_keys(connection, project_id)
+        metrics = key_limits.project_key_metrics(connection, project_id)
+    return {"keys": [{**key, **metrics[key["id"]]} for key in keys]}
+
+
+@router.put("/projects/{project_id}/keys/{key_id}/limits")
+def update_project_key_limits(
+    project_id: str, key_id: str, payload: KeyLimitChange, request: Request, admin: CurrentAdmin,
+) -> dict:
+    with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            """
+            SELECT id, name, prefix, created_at, revoked_at FROM business_keys
+            WHERE id = ? AND project_id = ?
+            """,
+            (key_id, project_id),
+        ).fetchone()
+        if row is None:
+            raise _error(404, "api_key_not_found", "业务 API Key 不存在")
+        if row["revoked_at"] is not None:
+            raise _error(409, "api_key_revoked", "业务 API Key 已注销")
+
+        metrics = key_limits.project_key_metrics(connection, project_id, key_id=key_id)[key_id]
+        after = payload.model_dump(by_alias=True)
+        before = {field: metrics[field] for field in after}
+        if before != after:
+            key_limits.set_limits(connection, key_id, payload.concurrency_limit, payload.rpm_limit)
+            record_audit(connection, admin, "key.limits.update", "key", key_id, {
+                "projectId": project_id, "before": before, "after": after,
+            })
+        return {**accounts._public_key(row), **metrics, **after}
 
 
 @router.get("/projects/{project_id}/usage")

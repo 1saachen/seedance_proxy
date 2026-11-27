@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-from app import admin_auth, billing, statements
+from app import admin_auth, billing, key_limits, statements
 from app.config import Settings
 from app.main import create_app
 from app.model_api import DRAFT_MODEL, SEEDANCE_MODELS
@@ -98,7 +98,9 @@ def test_operator_provisions_unique_customers_and_sees_only_metadata_in_project_
             assert connection.execute("SELECT password_hash FROM customer_accounts").fetchone()[0] != CUSTOMER_PASSWORD
 
         key = _customer_key(client, credentials["email"])
-        assert client.get(f"{ADMIN}/projects/{project['id']}/keys").json() == {"keys": [key["key"]]}
+        assert client.get(f"{ADMIN}/projects/{project['id']}/keys").json() == {"keys": [{
+            **key["key"], "concurrencyLimit": None, "rpmLimit": None, "activeTasks": 0, "requestsLastMinute": 0,
+        }]}
         assert client.get(f"{ADMIN}/projects/{other['id']}/keys").json() == {"keys": []}
         search = client.get(f"{ADMIN}/projects", params={"q": "CUSTOMER@EXAMPLE", "pageSize": 1}).json()
         assert search == {"items": [{**project, "activeKeys": 1}], "total": 1, "page": 1, "pageSize": 1}
@@ -117,6 +119,97 @@ def test_operator_provisions_unique_customers_and_sees_only_metadata_in_project_
         assert client.get(
             f"{ADMIN}/projects", headers={"Authorization": f"Bearer {key['secret']}"},
         ).status_code == 401
+
+
+def test_operator_key_limit_updates_are_scoped_strict_and_audited_once(tmp_path: Path) -> None:
+    with _client(tmp_path / "key-limits.sqlite") as client:
+        csrf = _login_admin(client)
+        project = _create_project(client, csrf, "limits@example.com")
+        foreign = _create_project(client, csrf, "foreign@example.com")
+        key = _customer_key(client, project["email"])
+        key_id = key["key"]["id"]
+        keys_url = f"{ADMIN}/projects/{project['id']}/keys"
+        url = f"{keys_url}/{key_id}/limits"
+        configured = {"concurrencyLimit": 1000, "rpmLimit": 60000}
+        unrestricted = {"concurrencyLimit": None, "rpmLimit": None}
+        assert client.put(url, json=configured).status_code == 403
+        foreign_update = client.put(
+            f"{ADMIN}/projects/{foreign['id']}/keys/{key_id}/limits", headers=csrf, json=configured,
+        )
+        assert foreign_update.status_code == 404
+        assert foreign_update.json()["detail"]["code"] == "api_key_not_found"
+
+        for payload in (
+            {"concurrencyLimit": 0, "rpmLimit": None}, {"concurrencyLimit": 1001, "rpmLimit": None},
+            {"concurrencyLimit": None, "rpmLimit": 0}, {"concurrencyLimit": None, "rpmLimit": 60001},
+            {"concurrencyLimit": True, "rpmLimit": None}, {"concurrencyLimit": None, "rpmLimit": "10"},
+            {"concurrencyLimit": 1.0, "rpmLimit": None}, {"concurrencyLimit": None},
+            {**unrestricted, "projectId": foreign["id"]},
+        ):
+            assert client.put(url, headers=csrf, json=payload).status_code == 422
+
+        default_key = {**key["key"], **unrestricted, "activeTasks": 0, "requestsLastMinute": 0}
+        assert client.put(url, headers=csrf, json=unrestricted).json() == default_key
+        updated = client.put(url, headers=csrf, json=configured)
+        assert updated.status_code == 200
+        assert updated.json() == {**default_key, **configured}
+        assert key["secret"] not in updated.text
+        assert client.put(url, headers=csrf, json=configured).json() == updated.json()
+        rpm_only = {"concurrencyLimit": None, "rpmLimit": 60000}
+        assert client.put(url, headers=csrf, json=rpm_only).json() == {**default_key, **rpm_only}
+        concurrency_only = {"concurrencyLimit": 1000, "rpmLimit": None}
+        assert client.put(url, headers=csrf, json=concurrency_only).json() == {**default_key, **concurrency_only}
+        assert client.put(url, headers=csrf, json=unrestricted).json() == default_key
+        assert client.get(f"{CUSTOMER}/keys").json() == {"keys": [key["key"]]}
+
+        with client.app.state.db.connect() as connection:
+            _record_usage(connection, project["id"], key_id, "active_task", "2025-01-01 00:00:00", None, "running")
+            assert key_limits.admit_request(connection, key_id) is None
+        observed_key = {**default_key, "activeTasks": 1, "requestsLastMinute": 1}
+        assert client.get(keys_url).json() == {"keys": [observed_key]}
+
+        customer = _open_customer(client, project["email"])
+        revoke = client.delete(f"{CUSTOMER}/keys/{key_id}", headers={"X-CSRF-Token": customer["csrfToken"]})
+        assert revoke.status_code == 204
+        revoked_update = client.put(url, headers=csrf, json=unrestricted)
+        assert revoked_update.status_code == 409
+        assert revoked_update.json()["detail"]["code"] == "api_key_revoked"
+        assert client.get(keys_url).json() == {"keys": [{**observed_key, "status": "revoked"}]}
+
+        audit = client.get(f"{ADMIN}/audit")
+        changes = [item for item in audit.json()["items"] if item["action"] == "key.limits.update"]
+        assert len(changes) == 4
+        for change in changes:
+            assert (change["actor"], change["targetType"], change["targetId"]) == ("operator", "key", key_id)
+        assert [change["details"] for change in changes] == [
+            {"projectId": project["id"], "before": concurrency_only, "after": unrestricted},
+            {"projectId": project["id"], "before": rpm_only, "after": concurrency_only},
+            {"projectId": project["id"], "before": configured, "after": rpm_only},
+            {"projectId": project["id"], "before": unrestricted, "after": configured},
+        ]
+        assert key["secret"] not in audit.text
+        client.cookies.delete(admin_auth.SESSION_COOKIE)
+        assert client.put(url, headers=csrf, json=configured).status_code == 401
+
+
+def test_key_limit_changes_roll_back_if_auditing_fails(tmp_path: Path) -> None:
+    with _client(tmp_path / "key-limit-rollback.sqlite") as client:
+        csrf = _login_admin(client)
+        project = _create_project(client, csrf, "rollback-limits@example.com")
+        key_id = _customer_key(client, project["email"])["key"]["id"]
+        keys_url = f"{ADMIN}/projects/{project['id']}/keys"
+        with client.app.state.db.connect() as connection:
+            connection.execute("""
+                CREATE TRIGGER reject_limit_audit BEFORE INSERT ON admin_audit
+                WHEN NEW.action = 'key.limits.update'
+                BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END
+            """)
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
+            client.put(
+                f"{keys_url}/{key_id}/limits", headers=csrf, json={"concurrencyLimit": 2, "rpmLimit": 30},
+            )
+        key = client.get(keys_url).json()["keys"][0]
+        assert key["concurrencyLimit"] is None and key["rpmLimit"] is None
 
 
 def test_admin_usage_and_frozen_bill_reuse_the_customer_ledger(tmp_path: Path) -> None:

@@ -23,12 +23,13 @@ export function httpsVideoUrl(value) {
 }
 
 class VideoApiError extends Error {
-  constructor(code, status, detail) {
+  constructor(code, status, detail, retryAfter) {
     super('Video API request failed');
     this.code = code;
     this.status = status;
     this.taskId = matchesId(detail?.task_id, taskIdPattern) ? detail.task_id : null;
     this.uploadId = matchesId(detail?.uploadId, uploadIdPattern) ? detail.uploadId : null;
+    this.retryAfter = status === 429 && /^[1-9][0-9]?$/.test(retryAfter ?? '') ? Number(retryAfter) : null;
   }
 }
 
@@ -60,7 +61,7 @@ async function request(key, path, { body, form, idempotencyKey, signal } = {}) {
   if (!response.ok) {
     const detail = payload?.detail;
     const code = typeof detail?.code === 'string' ? detail.code : 'request_rejected';
-    throw new VideoApiError(code, response.status, detail);
+    throw new VideoApiError(code, response.status, detail, response.headers.get('Retry-After'));
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new VideoApiError('invalid_response');
   return payload;
@@ -149,15 +150,24 @@ async function getOrCreateGroup(key, run, signal) {
     if (match) return readId(match.id, groupIdPattern);
   }
   run.groupUnconfirmed = true;
-  const result = await request(key, '/api/asset-group/create', { body: { name: run.groupName }, signal });
-  return readId(result.group?.id, groupIdPattern);
+  try {
+    const result = await request(key, '/api/asset-group/create', { body: { name: run.groupName }, signal });
+    return readId(result.group?.id, groupIdPattern);
+  } catch (error) {
+    if (error.code === 'key_rpm_exceeded') run.groupUnconfirmed = false;
+    throw error;
+  }
 }
 
 async function stageUpload(key, item, signal) {
+  if (item.uploadReady) return;
   if (item.uploadId) {
     const existing = await request(key, `/api/asset/upload-file/${item.uploadId}`, { signal });
     if (existing.uploadId !== item.uploadId) throw new VideoApiError('invalid_response');
-    if (existing.status === 'staged') return;
+    if (existing.status === 'staged') {
+      item.uploadReady = true;
+      return;
+    }
     if (existing.status !== 'failed') {
       throw new VideoApiError(existing.status === 'expired' ? 'upload_expired' : 'upload_in_progress');
     }
@@ -168,6 +178,7 @@ async function stageUpload(key, item, signal) {
   try {
     const result = await request(key, '/api/asset/upload-file', { form, idempotencyKey: item.uploadKey, signal });
     item.uploadId = readId(result.uploadId, uploadIdPattern);
+    item.uploadReady = true;
   } catch (error) {
     if (error.uploadId) item.uploadId = error.uploadId;
     throw error;

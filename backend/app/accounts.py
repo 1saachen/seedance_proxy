@@ -13,6 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, SecretStr
 
+from . import key_limits
+
 
 SESSION_COOKIE = "seedance_customer_session"
 SESSION_PATH = "/api/customer"
@@ -236,13 +238,34 @@ def _find_business_key(request: Request, credentials: HTTPAuthorizationCredentia
     return BusinessPrincipal(project_id=key["project_id"], key_id=key["id"]) if key is not None else None
 
 
+def _invalid_business_key() -> HTTPException:
+    return _error(401, "invalid_api_key", "请提供有效的业务 API Key", {"WWW-Authenticate": "Bearer"})
+
+
+def authenticate_business_key(
+    request: Request, credentials: HTTPAuthorizationCredentials | None,
+) -> BusinessPrincipal:
+    principal = _find_business_key(request, credentials)
+    if principal is None:
+        raise _invalid_business_key()
+    return principal
+
+
 def require_business_key(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
 ) -> BusinessPrincipal:
-    principal = _find_business_key(request, credentials)
-    if principal is None:
-        raise _error(401, "invalid_api_key", "请提供有效的业务 API Key", {"WWW-Authenticate": "Bearer"})
+    principal = authenticate_business_key(request, credentials)
+    with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        active = connection.execute(
+            "SELECT 1 FROM business_keys WHERE id = ? AND revoked_at IS NULL", (principal.key_id,),
+        ).fetchone()
+        if active is None:
+            raise _invalid_business_key()
+        retry_after = key_limits.admit_request(connection, principal.key_id)
+    if retry_after is not None:
+        raise _error(429, "key_rpm_exceeded", "API Key reached its request limit", {"Retry-After": str(retry_after)})
     return principal
 
 

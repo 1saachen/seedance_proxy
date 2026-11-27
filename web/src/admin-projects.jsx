@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 import { adminApi } from './admin-api.js';
 import { ProjectTerms, Statements, Usage } from './admin-billing.jsx';
 import { DataTable, Dialog, LoadState, Message, Pager, useAdminMutation, useAdminQuery } from './admin-ui.jsx';
-import { formatDate, Status } from './workbench-format.jsx';
+import { formatDate, formatNumber, Status } from './workbench-format.jsx';
 
 function CreateCustomer({ csrfToken, onClose, onCreated, onExpired }) {
   const mutation = useAdminMutation(onExpired);
@@ -44,20 +44,111 @@ function CreateCustomer({ csrfToken, onClose, onCreated, onExpired }) {
   );
 }
 
-function ProjectKeys({ projectId, onExpired }) {
+function KeyLimitField({ label, name, limit, max }) {
+  return (
+    <label className="admin-field">
+      {label}
+      <input name={name} type="number" min={1} max={max} step={1}
+        defaultValue={limit ?? ''} aria-describedby={'key-limit-hint-' + name} />
+      <small id={'key-limit-hint-' + name}>填写 1 至 {formatNumber(max)} 的整数，留空表示不限。</small>
+    </label>
+  );
+}
+
+function KeyLimitsDialog({ projectId, apiKey, csrfToken, onExpired, onClose, onSaved }) {
+  const mutation = useAdminMutation(onExpired);
+
+  async function save(event) {
+    event.preventDefault();
+    const fields = new FormData(event.currentTarget);
+    const concurrency = fields.get('concurrencyLimit');
+    const rpm = fields.get('rpmLimit');
+    const updated = await mutation.run(() => adminApi.updateKeyLimits(projectId, apiKey.id, {
+      concurrencyLimit: concurrency === '' ? null : Number(concurrency),
+      rpmLimit: rpm === '' ? null : Number(rpm),
+    }, csrfToken));
+    if (updated) onSaved(updated);
+  }
+
+  return (
+    <Dialog title="调整业务 Key 限额" onClose={onClose} busy={mutation.busy}>
+      <form className="admin-form" onSubmit={save}>
+        <p className="admin-key-name">{apiKey.name} <code>{apiKey.prefix}</code></p>
+        <KeyLimitField label="并发任务上限" name="concurrencyLimit" limit={apiKey.concurrencyLimit} max={1000} />
+        <KeyLimitField label="每分钟请求上限（RPM）" name="rpmLimit" limit={apiKey.rpmLimit} max={60000} />
+        <Message error={mutation.error} />
+        <div className="admin-form-actions">
+          <button type="button" className="button secondary" disabled={mutation.busy} onClick={onClose}>取消</button>
+          <button className="button primary" disabled={mutation.busy}>{mutation.busy ? '正在保存…' : '保存限额'}</button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function keyUsage(count, limit) {
+  return formatNumber(count) + ' / ' + (limit == null ? '不限' : formatNumber(limit));
+}
+
+function ProjectKeys({ projectId, onExpired, csrfToken }) {
   const load = useCallback((signal) => adminApi.keys(projectId, signal), [projectId]);
   const resource = useAdminQuery(load, onExpired);
+  const refresh = useAdminMutation(onExpired);
+  const [snapshot, setSnapshot] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [notice, setNotice] = useState('');
+
+  async function refreshKeys() {
+    setNotice('');
+    const result = await refresh.run(() => adminApi.keys(projectId));
+    if (result) {
+      setSnapshot(result.keys);
+      setNotice('业务 Key 用量已刷新。');
+    }
+  }
+
+  function saved(updated) {
+    setSnapshot((previous) =>
+      (previous ?? resource.data.keys).map((item) => item.id === updated.id ? updated : item),
+    );
+    setEditing(null);
+    setNotice('业务 Key 限额已保存。');
+  }
+
   return (
-    <LoadState resource={resource}>{({ keys }) => (
-      <DataTable label="项目业务 Key" headings={['名称', '前缀', '状态', '创建时间']} empty="该项目还未创建业务 Key。">
-        {keys.map((key) => (
-          <tr key={key.id}>
-            <td>{key.name}</td><td><code>{key.prefix}</code></td><td><Status value={key.status} /></td>
-            <td>{formatDate(key.createdAt)}</td>
-          </tr>
-        ))}
-      </DataTable>
-    )}</LoadState>
+    <>
+      <div className="admin-toolbar">
+        <div>
+          <h3>业务 Key</h3>
+          <p>并发统计排队、运行及提交待确认等视频任务。RPM 统计近 60 秒内通过 Key 限流检查的业务 API 请求。</p>
+        </div>
+        <button type="button" className="button secondary" disabled={!resource.data || refresh.busy} onClick={refreshKeys}>
+          {refresh.busy ? '正在刷新…' : '刷新用量'}
+        </button>
+      </div>
+      <Message error={refresh.error} notice={notice} />
+      <LoadState resource={resource}>{({ keys }) => (
+        <DataTable label="项目业务 Key" tableClass="admin-key-table"
+          headings={['名称 / 前缀', '状态', '视频并发', '最近 60 秒请求', '创建时间', '操作']}
+          empty="该项目还未创建业务 Key。">
+          {(snapshot ?? keys).map((key) => (
+            <tr key={key.id}>
+              <td>{key.name}<small><code>{key.prefix}</code></small></td>
+              <td><Status value={key.status} /></td>
+              <td className="admin-key-usage">{keyUsage(key.activeTasks, key.concurrencyLimit)}</td>
+              <td className="admin-key-usage">{keyUsage(key.requestsLastMinute, key.rpmLimit)}</td>
+              <td>{formatDate(key.createdAt)}</td>
+              <td>{key.status === 'active' ? (
+                <button type="button" className="button secondary" disabled={refresh.busy}
+                  onClick={() => setEditing(key)} aria-label={'调整限额：' + key.name}>调整限额</button>
+              ) : '—'}</td>
+            </tr>
+          ))}
+        </DataTable>
+      )}</LoadState>
+      {editing && <KeyLimitsDialog projectId={projectId} apiKey={editing} csrfToken={csrfToken}
+        onExpired={onExpired} onClose={() => setEditing(null)} onSaved={saved} />}
+    </>
   );
 }
 
@@ -87,7 +178,7 @@ function ProjectDetail({ project, onExpired, csrfToken }) {
         {section === 'usage' && <Usage projectId={project.id} onExpired={onExpired} />}
         {section === 'statements' && <Statements project={project} onExpired={onExpired} csrfToken={csrfToken} />}
         {section === 'terms' && <ProjectTerms projectId={project.id} onExpired={onExpired} csrfToken={csrfToken} />}
-        {section === 'keys' && <ProjectKeys projectId={project.id} onExpired={onExpired} />}
+        {section === 'keys' && <ProjectKeys projectId={project.id} onExpired={onExpired} csrfToken={csrfToken} />}
       </div>
     </section>
   );

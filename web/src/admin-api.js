@@ -40,6 +40,10 @@ export const adminApi = {
   projects: (q, page, signal) => query('/projects', { q, page, pageSize: 15 }, signal),
   createProject: (body, csrfToken) => request('/projects', { method: 'POST', body, csrfToken }),
   keys: (id, signal) => request(projectPath(id) + '/keys', { signal }),
+  updateKeyLimits: (projectId, keyId, body, csrfToken) =>
+    request(projectPath(projectId) + '/keys/' + encodeURIComponent(keyId) + '/limits', {
+      method: 'PUT', body, csrfToken,
+    }),
   usage: (id, month, page, signal) => query(projectPath(id) + '/usage', { month, page, pageSize: 25 }, signal),
   statement: (id, month, page, signal) =>
     query(projectPath(id) + '/statements/' + encodeURIComponent(month), { page, pageSize: 50 }, signal),
@@ -64,6 +68,8 @@ export function adminErrorMessage(error) {
       return '该账期尚未开始。';
     case 'statement_amount_changed':
       return '应付金额已经变化，请刷新账单并重新核对。';
+    case 'api_key_revoked':
+      return '这枚业务 Key 已撤销。请刷新用量以查看最新状态。';
     default:
       break;
   }
