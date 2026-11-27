@@ -58,9 +58,11 @@ export const adminApi = {
     }),
   terms: (id, signal) => request(projectPath(id) + '/billing-terms', { signal }),
   createTerms: (id, body, csrfToken) => request(projectPath(id) + '/billing-terms', { method: 'POST', body, csrfToken }),
-  prices: (page, signal) => query('/prices', { page, pageSize: 25 }, signal),
+  prices: (kind, page, signal) => query('/prices', { kind, page, pageSize: 25 }, signal),
   createPrice: (body, csrfToken) => request('/prices', { method: 'POST', body, csrfToken }),
-  previewVolcenginePrices: (effectiveAt, signal) => query('/prices/volcengine/preview', { effectiveAt }, signal),
+  createGeneralPrice: (body, csrfToken) => request('/prices/general', { method: 'POST', body, csrfToken }),
+  previewVolcenginePrices: (effectiveAt, { kind, payableBps }, signal) =>
+    query('/prices/volcengine/preview', { effectiveAt, kind, payableBps }, signal),
   applyVolcenginePrices: (body, csrfToken) => request('/prices/volcengine/apply', { method: 'POST', body, csrfToken }),
   audit: (page, signal) => query('/audit', { page, pageSize: 25 }, signal),
 };
@@ -81,6 +83,8 @@ export function adminErrorMessage(error) {
       return '生效时间需在官网价核验日期当天或之后。';
     case 'official_price_catalog_incomplete':
       return '当前官网价目录不完整，暂时无法导入。';
+    case 'official_price_out_of_range':
+      return '按此比例计算的单价超出支持范围，请降低平台价比例。';
     case 'official_price_preview_stale':
       return '价目已发生变化，请刷新预览后重新核对。';
     case 'price_conflict':

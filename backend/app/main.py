@@ -9,9 +9,8 @@ import httpx
 
 from . import (
     accounts, admin_auth, admin_operations, asset_liveness, asset_presets, assets, billing, customer_billing,
-    customer_tasks, developer_docs, general_models, key_limits, model_access, model_api, provider_costs, statements,
-    upload_registration, uploads, usage,
-    video_callbacks, video_task_management,
+    customer_tasks, developer_docs, general_model_prices, general_models, key_limits, model_access, model_api,
+    provider_costs, statements, upload_registration, uploads, usage, video_callbacks, video_task_management,
 )
 from .config import Settings
 from .db import Database
@@ -78,6 +77,7 @@ def create_app(
             video_task_management.initialize(connection)
             video_callbacks.initialize(connection)
             billing.initialize(connection)
+            general_model_prices.initialize(connection)
             statements.initialize(connection)
             provider_costs.initialize(connection)
             uploads.initialize(connection)

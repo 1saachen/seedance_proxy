@@ -554,8 +554,33 @@
   justify-content: flex-end;
 }
 
+.admin-price-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-bottom: 0.75rem;
+}
+
+.admin-price-list {
+  min-width: 36rem;
+}
+
+.admin-price-list-note {
+  margin-bottom: 0.65rem;
+}
+
 .admin-price-import-dialog {
   width: min(100% - 2rem, 58rem);
+}
+
+.admin-price-import-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+
+.admin-price-import-dialog > :not(.admin-table-scroll) {
+  flex: none;
 }
 
 .admin-price-import-note {
@@ -565,6 +590,14 @@
 
 .admin-price-import-controls {
   margin-block: 0.95rem 0.75rem;
+}
+
+.admin-price-scope {
+  min-width: 7rem;
+}
+
+.admin-price-ratio {
+  width: 10.75rem;
 }
 
 .admin-price-preview-meta {
@@ -602,6 +635,7 @@
 }
 
 .admin-price-import-dialog .admin-table-scroll {
+  min-height: min(7.5rem, 28dvh);
   max-height: min(43vh, 29rem);
   margin-bottom: 0.55rem;
 }
@@ -747,7 +781,13 @@
 
 @media (max-width: 35rem) {
   .admin-price-import-dialog .admin-table-scroll {
-    max-height: min(32dvh, 22rem);
+    max-height: min(25dvh, 22rem);
+  }
+
+  .admin-price-scope,
+  .admin-price-ratio {
+    flex: 1 1 7rem;
+    min-width: 0;
   }
 
   .admin-price-preview-table {
@@ -759,6 +799,11 @@
   .admin-price-preview-table th:nth-child(1) { width: 7.75rem; }
   .admin-price-preview-table th:nth-child(2) { width: 5.45rem; }
   .admin-price-preview-table th:nth-child(3) { width: 5.75rem; }
+
+  .admin-price-preview-table th:nth-child(3),
+  .admin-price-preview-table th:nth-child(4) {
+    font-size: 0.82rem;
+  }
   .admin-price-preview-table th:nth-child(4) { width: 3.4rem; }
 
   .admin-price-preview-table td:first-child {

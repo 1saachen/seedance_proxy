@@ -72,20 +72,23 @@ test('administrator grants and revokes Seedance through the project entitlement 
   }
 });
 
-test('official price import previews the Beijing time and applies its server token with CSRF', async (t) => {
-  const preview = { effectiveAt: '2026-11-28T16:00:00Z', previewToken: 'fixture-preview-token' };
+test('official price import previews the scope, exact ratio and Beijing time and applies its token with CSRF', async (t) => {
+  const preview = { effectiveAt: '2026-11-28T16:00:00Z', kind: 'all', payableBps: 5000, previewToken: 'fixture-preview-token' };
   const applied = { createdCount: 28, skippedCount: 0 };
   const controller = new AbortController();
   const fetch = t.mock.method(globalThis, 'fetch', async (_path, { method }) =>
     Response.json(method === 'GET' ? preview : applied),
   );
 
-  const selection = await adminApi.previewVolcenginePrices('2026-11-29T00:00+08:00', controller.signal);
+  const selection = await adminApi.previewVolcenginePrices('2026-11-29T00:00+08:00', { kind: 'all', payableBps: 5000 }, controller.signal);
   assert.deepEqual(selection, preview);
   assert.deepEqual(await adminApi.applyVolcenginePrices(selection, 'fixture-csrf'), applied);
 
   const [[previewPath, read], [applyPath, write]] = fetch.mock.calls.map(({ arguments: args }) => args);
-  assert.equal(previewPath, '/api/admin/prices/volcengine/preview?effectiveAt=2026-11-29T00%3A00%2B08%3A00');
+  assert.equal(
+    previewPath,
+    '/api/admin/prices/volcengine/preview?effectiveAt=2026-11-29T00%3A00%2B08%3A00&kind=all&payableBps=5000',
+  );
   assert.equal(read.signal, controller.signal);
   assert.equal(read.headers['X-CSRF-Token'], undefined);
   assert.equal(applyPath, '/api/admin/prices/volcengine/apply');
@@ -107,4 +110,22 @@ test('a stale official price preview requires a fresh review and does not replay
     },
   );
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('admin reads model prices by modality and writes nonvideo meter prices with CSRF', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json({}));
+  const price = {
+    kind: 'image', upstreamModel: 'test-model', meter: 'image', effectiveAt: '2026-12-01T08:00:00Z',
+    unitPrice: '0.145', source: 'fixture',
+  };
+  await adminApi.prices('image', 2);
+  await adminApi.createGeneralPrice(price, 'fixture-csrf');
+
+  const [[listPath, list], [createPath, create]] = fetch.mock.calls.map(({ arguments: args }) => args);
+  assert.equal(listPath, '/api/admin/prices?kind=image&page=2&pageSize=25');
+  assert.equal(list.method, 'GET');
+  assert.equal(createPath, '/api/admin/prices/general');
+  assert.equal(create.method, 'POST');
+  assert.equal(create.headers['X-CSRF-Token'], 'fixture-csrf');
+  assert.deepEqual(JSON.parse(create.body), price);
 });
