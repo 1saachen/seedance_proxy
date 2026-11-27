@@ -93,6 +93,14 @@
   line-height: 1.75;
 }
 
+.landing-intro > .landing-subtitle {
+  margin-top: 0.55rem;
+  color: var(--landing-ink);
+  font-size: clamp(1.18rem, 2vw, 1.5rem);
+  font-weight: 680;
+  line-height: 1.4;
+}
+
 .landing-intro .hero-actions {
   margin-top: 1.5rem;
 }

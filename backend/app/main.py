@@ -116,7 +116,7 @@ def create_app(
                     with suppress(asyncio.CancelledError):
                         await task
 
-    app = FastAPI(title="Richi 火山模型", version="0.1.0", openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Rich 中转", version="0.1.0", openapi_url=None, lifespan=lifespan)
     upload_registration.redact_source_access_log()
     logging.getLogger("uvicorn.access").addFilter(_admin_access_filter)
     app.state.settings = settings
