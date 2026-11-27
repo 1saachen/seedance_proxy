@@ -741,6 +741,30 @@ function UsageReport({ day, active, onClearDay, onExpired }) {
   );
 }
 
+function BillingPeriodSelect({ month, maxMonth, onChange }) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const [currentYear, currentMonthNumber] = maxMonth.split('-').map(Number);
+  const yearOptions = Array.from({ length: currentYear - 2000 + 1 }, (_, index) => currentYear - index);
+  const monthOptions = Array.from({ length: year === currentYear ? currentMonthNumber : 12 }, (_, index) => index + 1);
+
+  function selectPeriod(nextYear, nextMonth) {
+    const availableMonth = nextYear === currentYear ? Math.min(nextMonth, currentMonthNumber) : nextMonth;
+    onChange(`${nextYear}-${String(availableMonth).padStart(2, '0')}`);
+  }
+
+  return (
+    <div className="month-filter" role="group" aria-label="账期">
+      <span aria-hidden="true">账期</span>
+      <select aria-label="年份" value={year} onChange={(event) => selectPeriod(Number(event.target.value), monthNumber)}>
+        {yearOptions.map((option) => <option key={option} value={option}>{option} 年</option>)}
+      </select>
+      <select aria-label="月份" value={monthNumber} onChange={(event) => selectPeriod(year, Number(event.target.value))}>
+        {monthOptions.map((option) => <option key={option} value={option}>{option} 月</option>)}
+      </select>
+    </div>
+  );
+}
+
 function Billing({ month, setMonth, maxMonth, day, showUsage, onClearDay, onExpired }) {
   const [lastUsageDay, setLastUsageDay] = useState(day);
   const usageBasis = useRef(null);
@@ -764,18 +788,7 @@ function Billing({ month, setMonth, maxMonth, day, showUsage, onClearDay, onExpi
       <section className="billing-view" aria-labelledby="billing-statement-link" hidden={showUsage}>
         <div className="panel-head billing-view-head">
           <p>按任务结束时间归入账期（北京时间）。</p>
-          <label className="month-filter">
-            账期
-            <input
-              type="month"
-              value={month}
-              min="2000-01"
-              max={maxMonth}
-              onChange={(event) => {
-                if (event.target.validity.valid && event.target.value) setMonth(event.target.value);
-              }}
-            />
-          </label>
+          <BillingPeriodSelect month={month} maxMonth={maxMonth} onChange={setMonth} />
         </div>
         <MonthlyStatement key={month} month={month} active={!showUsage} onExpired={onExpired} />
       </section>

@@ -810,7 +810,8 @@ input {
 }
 
 .usage-report-filters input,
-.usage-report-filters select {
+.usage-report-filters select,
+.month-filter select {
   min-width: 0;
   width: 100%;
   min-height: 2.75rem;
@@ -997,11 +998,12 @@ input {
 }
 .month-filter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
   white-space: nowrap;
 }
-.month-filter input {
+.month-filter select {
   width: auto;
 }
 .statement-overview,
