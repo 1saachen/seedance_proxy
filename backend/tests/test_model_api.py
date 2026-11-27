@@ -14,6 +14,7 @@ from PIL import Image
 from app.billing import add_price, add_project_terms
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH, poll_unfinished
 
 
@@ -38,7 +39,10 @@ def _client(tmp_path, upstream, *, limit=5, key=ARK_SECRET):
 def _register(client, name="alice"):
     response = client.post("/api/customer/register", json={"email": name + "@example.com", "password": "example-password-123"})
     assert response.status_code == 201, response.text
-    return response.json()["csrfToken"]
+    account = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
+    return account["csrfToken"]
 
 
 def _key(client, csrf):
@@ -80,7 +84,7 @@ def test_task_flow_preserves_provider_usage_and_keeps_keys_isolated(tmp_path):
         csrf = _register(client)
         owner = _key(client, csrf)
         same_project = _key(client, csrf)
-        models = client.get("/v1/models", headers=owner).json()["data"]
+        models = [model for model in client.get("/v1/models", headers=owner).json()["data"] if model["type"] == "video"]
         assert [model["id"] for model in models] == [
             "doubao-seedance-2.5", "doubao-seedance-2.5-flash",
             "doubao-seedance-2.0", "doubao-seedance-2.0-fast", "doubao-seedance-2.0-mini",
@@ -217,7 +221,7 @@ def test_variant_catalog_validates_limits_and_settles_using_its_own_model_price(
         models = client.get("/v1/models", headers=headers).json()["data"]
         model = next(model for model in models if model["id"] == alias)
         assert model == {
-            "id": alias, "object": "model", "owned_by": "volcengine",
+            "id": alias, "object": "model", "owned_by": "volcengine", "type": "video",
             "video": {
                 "max_duration": maximum, "resolutions": ["480p", "720p"], "audio_only": audio_only,
                 "frame_ratio_adaptive": audio_only, "max_reference_images": image_limit,

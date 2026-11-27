@@ -12,6 +12,7 @@ const auditActions = {
   'auth.login_throttled': '管理员登录限流',
   'auth.logout': '管理员退出',
   'customer.create': '开通客户',
+  'project.model_access.update': '调整模型授权',
   'key.limits.update': '调整业务 Key 限额',
   'billing.statement.confirm': '确认月账单',
   'billing.terms.create': '新增计费条款',
@@ -48,6 +49,9 @@ const auditFields = {
 };
 
 function auditValue(key, value) {
+  if ((key === 'before' || key === 'after') && typeof value?.seedanceEnabled === 'boolean') {
+    return value.seedanceEnabled ? 'Seedance 已授权' : 'Seedance 未授权';
+  }
   if ((key === 'before' || key === 'after') && value && Object.hasOwn(value, 'concurrencyLimit')) {
     const concurrency = value.concurrencyLimit == null ? '不限' : formatNumber(value.concurrencyLimit);
     const rpm = value.rpmLimit == null ? '不限' : formatNumber(value.rpmLimit);

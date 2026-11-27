@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Seedance API 开发者文档 | Richi 火山模型</title>
+    <meta name="description" content="Richi 火山模型 Seedance API 接入手册。查看鉴权、模型规格、视频生成、任务管理、素材接口、回调和错误处理。" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="Richi 火山模型" />
+    <meta property="og:title" content="Seedance API 开发者文档 | Richi 火山模型" />
+    <meta property="og:description" content="查看 Seedance 视频生成、任务管理与素材接口的参数和示例。" />
+    <meta name="theme-color" content="#f3f5fa" />
+    <meta name="robots" content="noindex, nofollow" />
+    <style>
+:root {
+  color-scheme: light;
+  --paper: #ffffff;
+  --fog: #f5f7fb;
+  --navy: #151b2b;
+  --blue: #2448df;
+  --blue-hover: #1c38b5;
+  --text: #1c2436;
+  --muted: #55627a;
+  --line: #dce3ee;
+  --tint: #edf2ff;
+  --teal: #007c70;
+  --mono: 'IBM Plex Mono', 'Cascadia Mono', 'SFMono-Regular', Consolas, monospace;
+  font:
+    400 1rem/1.55 'Segoe UI',
+    'PingFang SC',
+    'Microsoft YaHei',
+    system-ui,
+    sans-serif;
+  color: var(--text);
+  background: var(--fog);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+body,
+h1,
+h2,
+h3,
+p,
+figure,
+dl,
+dd,
+pre {
+  margin: 0;
+}
+body {
+  min-width: 280px;
+}
+h1,
+h2,
+h3 {
+  line-height: 1.22;
+}
+small {
+  font-size: 0.875rem;
+}
+code,
+pre {
+  font-family: var(--mono);
+}
+pre {
+  overflow-x: auto;
+}
+a {
+  color: var(--blue);
+  text-underline-offset: 0.19em;
+}
+button,
+input {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.8rem;
+  left: 0.8rem;
+  transform: translateY(-200%);
+  padding: 0.6rem 1rem;
+  z-index: 5;
+  background: var(--paper);
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+.page-width {
+  width: min(calc(100% - 3rem), 76rem);
+  margin-inline: auto;
+}
+.public-header,
+.workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 5rem;
+}
+.public-header {
+  border-bottom: 1px solid var(--line);
+}
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--navy);
+  text-decoration: none;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.brand-mark {
+  display: grid;
+  width: 2.15rem;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 0.5rem;
+  background: var(--navy);
+  color: #e4efff;
+  font-weight: 800;
+  font-size: 1.15rem;
+}
+.public-nav,
+.hero-actions,
+.row-actions,
+.account-menu {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.public-nav {
+  justify-content: flex-end;
+  gap: clamp(0.6rem, 3vw, 1.6rem);
+}
+.button {
+  min-height: 2.75rem;
+  padding: 0.5rem 0.95rem;
+  border: 1px solid transparent;
+  border-radius: 0.48rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.primary {
+  color: #fff;
+  background: var(--blue);
+}
+.primary:hover:not(:disabled) {
+  background: var(--blue-hover);
+}
+.secondary {
+  color: var(--navy);
+  border-color: #c4cde0;
+  background: var(--paper);
+}
+.secondary:hover:not(:disabled),
+.light:hover {
+  background: var(--tint);
+}
+.light {
+  color: var(--navy);
+  background: #f1f6ff;
+}
+.danger {
+  color: #fff;
+  background: #a62738;
+}
+.danger:hover:not(:disabled) {
+  background: #861e2c;
+}
+.public-footer { display: flex; gap: 1rem; justify-content: space-between; padding-block: 1rem; border-top: 1px solid var(--line); }
+    </style>
+    <link rel="stylesheet" href="/docs-assets/reference.css" />
+    <script defer src="/docs-assets/reference.js"></script>
+  </head>
+  <body class="docs-page">
+    <a class="skip-link" href="#docs-main">跳到正文</a>
+    <div class="docs-masthead">
+      <header class="public-header page-width">
+        <a class="wordmark" href="/" aria-label="Richi 火山模型 首页">
+          <span class="brand-mark" aria-hidden="true">R</span><span>Richi 火山模型</span>
+        </a>
+        <nav class="public-nav" aria-label="主导航">
+          <a href="/">首页</a>
+          <a class="button secondary" href="/console/">登录工作台</a>
+        </nav>
+      </header>
+    </div>
+
+    <div class="docs-layout page-width">
+      <nav class="docs-toc" aria-labelledby="docs-toc-title">
+        <h2 id="docs-toc-title">文档目录</h2>
+        <ul>
+          <li><a href="#quickstart">快速接入</a></li>
+          <li><a href="#models">模型与规格</a></li>
+          <li><a href="#create-video">创建视频任务</a></li>
+          <li><a href="#examples">生成方式与示例</a></li>
+          <li><a href="#tasks">查询与管理任务</a></li>
+          <li><a href="#assets">上传与登记素材</a></li>
+          <li><a href="#asset-management">管理素材与素材组</a></li>
+          <li><a href="#callbacks">接收任务回调</a></li>
+          <li><a href="#errors">错误与重试</a></li>
+          <li><a href="#usage">用量与账单</a></li>
+          <li><a href="#official">方舟参考文档</a></li>
+        </ul>
+      </nav>
+
+      <main id="docs-main" class="docs-main">
+        <header>
+          <h1><span>Seedance API</span> <span>开发者文档</span></h1>
+          <p>用项目的业务 API Key 提交视频生成任务、查询结果及管理参考素材。</p>
+        </header>
+
+        <section id="quickstart" aria-labelledby="quickstart-title">
+          <h2 id="quickstart-title">快速接入</h2>
+          <p>可以从终端、支持自定义请求的 API 客户端，或应用代码调用。调用前先准备下面两项信息。</p>
+          <ul>
+            <li>在工作台查看 <strong>API 地址（Base URL）</strong>，调用时把接口路径拼在地址后面。</li>
+            <li>登录<a href="/console/">客户工作台</a>，在「API 接入」创建并保存<strong>业务 API Key</strong>。完整 Key 只显示一次。</li>
+          </ul>
+          <p>先发 <code>GET /v1/models</code> 确认可用模型。把请求地址设为 API 地址加 <code>/v1/models</code>，并添加 <code>Authorization: Bearer &lt;API_KEY&gt;</code> 请求头。</p>
+          <p>从返回的 <code>data[].id</code> 选择模型，按<a href="#create-video">创建视频任务</a>的接口发送 JSON。若使用第三方客户端，需要支持该接口或能自定义 HTTP 请求。</p>
+          <p>以下 Bash 和 Python 示例从运行命令的终端读取 <code>BASE_URL</code> 和 <code>API_KEY</code>。请妥善保管 Key，避免把真实 Key 写进公开代码或网页前端。</p>
+          <figure class="docs-example">
+            <figcaption>查看可用模型 · Bash</figcaption>
+            <pre tabindex="0"><code>export BASE_URL='https://richproxy.richbest.cn' # 使用其他实例时换成它的 API 地址
+read -rsp '业务 API Key: ' API_KEY
+printf '\n'
+export API_KEY
+
+curl -fSs "$BASE_URL/v1/models" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </figure>
+          <p>确认模型和参数后再提交视频任务。创建任务可能产生费用。每次新任务使用不同的 <code>Idempotency-Key</code>，网络中断重试时沿用原键和原请求体。</p>
+          <figure class="docs-example">
+            <figcaption>创建视频任务 · Bash</figcaption>
+            <pre tabindex="0"><code>export REQUEST_ID='video-order-001' # 每次新任务换一个
+curl -fSs "$BASE_URL/api/v3/contents/generations/tasks" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: $REQUEST_ID" \
+  -d '{
+    "model": "doubao-seedance-2.5",
+    "content": [{"type":"text","text":"镜头跟随末班电车驶过雨后的海滨街道"}],
+    "resolution": "720p",
+    "ratio": "16:9",
+    "duration": 5
+  }'</code></pre>
+          </figure>
+          <p>保存创建响应中的 <code>id</code>，用同一业务 Key 查询。任务成功后，从 <code>content.video_url</code> 获取视频链接。</p>
+          <figure class="docs-example">
+            <figcaption>使用返回的 ID 查单 · Bash</figcaption>
+            <pre tabindex="0"><code>export TASK_ID='vid_REPLACE_WITH_RETURNED_ID'
+curl -fSs "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </figure>
+          <p>业务 Key 用于视频和素材 API。项目的全部任务记录、账单和 Key 管理使用工作台登录会话。</p>
+
+          <details>
+            <summary>Python 示例 · 创建任务并有界轮询</summary>
+            <figure class="docs-example">
+              <figcaption>使用 Python 标准库</figcaption>
+              <pre tabindex="0"><code>import json
+import os
+import time
+from urllib.request import Request, urlopen
+from uuid import uuid4
+
+base_url = os.environ["BASE_URL"].rstrip("/")
+api_key = os.environ["API_KEY"]
+tasks = "/api/v3/contents/generations/tasks"
+request_id = os.getenv("REQUEST_ID") or uuid4().hex
+payload = {
+    "model": "doubao-seedance-2.5",
+    "content": [{"type": "text", "text": "镜头从雪线缓慢移向山间木屋"}],
+    "duration": 4,
+    "resolution": "480p",
+}
+
+def call(path, body=None):
+    headers = {"Authorization": "Bearer " + api_key}
+    if body is not None:
+        headers.update({
+            "Content-Type": "application/json",
+            "Idempotency-Key": request_id,
+        })
+    data = None if body is None else json.dumps(body).encode("utf-8")
+    with urlopen(Request(base_url + path, data=data, headers=headers), timeout=20) as response:
+        return json.load(response)
+
+print("REQUEST_ID:", request_id, flush=True)
+task = call(tasks, payload)
+task_id = task["id"]
+print("TASK_ID:", task_id, flush=True)
+for _ in range(60):
+    result = call(f"{tasks}/{task_id}")
+    if result["status"] == "succeeded":
+        print(result.get("content", {}).get("video_url"))
+        break
+    if result["status"] in {"failed", "expired", "cancelled", "submission_failed", "submission_unknown"}:
+        raise RuntimeError(result.get("error", result["status"]))
+    time.sleep(3)
+else:
+    print("轮询时间到，请稍后用同一 Key 查询已有任务 ID。")</code></pre>
+            </figure>
+          </details>
+        </section>
+
+        <section id="models" aria-labelledby="models-title">
+          <h2 id="models-title">模型与规格</h2>
+          <p class="docs-route"><strong>GET</strong><code>/v1/models</code></p>
+          <p>响应的 <code>data[].id</code> 是提交任务时的 <code>model</code>。<code>data[].video</code> 提供分辨率、最大时长、素材上限和参数限制，程序可以用它过滤选项。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="模型规格对照表">
+            <table>
+              <thead><tr><th scope="col">模型别名</th><th scope="col">分辨率</th><th scope="col">时长</th><th scope="col">参考图 / 视频 / 音频</th><th scope="col">单独输入音频</th></tr></thead>
+              <tbody>
+                <tr><td><code>doubao-seedance-2.5</code></td><td>480p、720p、1080p、4K</td><td>4–30 秒</td><td>30 / 10 / 10</td><td>支持</td></tr>
+                <tr><td><code>doubao-seedance-2.5-flash</code></td><td>480p、720p</td><td>4–30 秒</td><td>10 / 5 / 5</td><td>支持</td></tr>
+                <tr><td><code>doubao-seedance-2.0</code></td><td>480p、720p、1080p、4K</td><td>4–15 秒</td><td>9 / 3 / 3</td><td>需搭配图片或视频</td></tr>
+                <tr><td><code>doubao-seedance-2.0-fast</code></td><td>480p、720p</td><td>4–15 秒</td><td>9 / 3 / 3</td><td>需搭配图片或视频</td></tr>
+                <tr><td><code>doubao-seedance-2.0-mini</code></td><td>480p、720p</td><td>4–15 秒</td><td>9 / 3 / 3</td><td>需搭配图片或视频</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="docs-note">4K 请求使用小写 <code>4k</code>。方舟的 4K 和 2.5 标准版 1080p 使用 10 位 H.265 编码。浏览器无法预览时，可以下载后在兼容的播放器里打开。</p>
+          <p><a href="https://docs.volcengine.com/docs/ark/video-generation-tutorial?lang=zh">方舟视频生成能力对照</a></p>
+        </section>
+
+        <section id="create-video" aria-labelledby="create-video-title">
+          <h2 id="create-video-title">创建视频任务</h2>
+          <p class="docs-route"><strong>POST</strong><code>/api/v3/contents/generations/tasks</code></p>
+          <p>返回 HTTP <code>200</code> 和 <code>{"id":"vid_..."}</code> 表示提交被受理。生成异步运行。提交前为这次请求设定 <code>Idempotency-Key</code>，可在断线后安全查询这次提交的结果。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="生成请求参数">
+            <table>
+              <thead><tr><th scope="col">字段</th><th scope="col">类型</th><th scope="col">用途与限制</th></tr></thead>
+              <tbody>
+                <tr><td><code>model</code></td><td>字符串，必填</td><td>填写模型列表返回的业务别名。</td></tr>
+                <tr><td><code>content</code></td><td>数组，必填</td><td>至少一个输入项。提供提示词时最多一项 <code>text</code>。</td></tr>
+                <tr><td><code>resolution</code></td><td>字符串</td><td>按模型选择 <code>480p</code>、<code>720p</code>、<code>1080p</code> 或 <code>4k</code>。常规任务默认 <code>720p</code>。Draft 有单独的档位限制。</td></tr>
+                <tr><td><code>ratio</code></td><td>字符串</td><td><code>16:9</code>、<code>4:3</code>、<code>1:1</code>、<code>3:4</code>、<code>9:16</code>、<code>21:9</code> 或 <code>adaptive</code>。2.5 系列的首尾帧、编辑和延长按输入适配比例。</td></tr>
+                <tr><td><code>duration</code></td><td>整数</td><td>输出时长（秒）。填 <code>-1</code> 由方舟选择。2.5 系列编辑设为 <code>-1</code>。</td></tr>
+                <tr><td><code>seed</code></td><td>整数</td><td><code>-1</code> 随机取值，也可填写 0–2147483647。使用相同种子可以减少随机变化。</td></tr>
+                <tr><td><code>generate_audio</code></td><td>布尔</td><td>设置生成的视频是否带同步音频。</td></tr>
+                <tr><td><code>return_last_frame</code></td><td>布尔</td><td>开启后可从结果的 <code>content.last_frame_url</code> 取得尾帧。</td></tr>
+                <tr><td><code>watermark</code></td><td>布尔</td><td>控制输出视频是否带水印。</td></tr>
+                <tr><td><code>output_format</code></td><td>字符串</td><td>2.5 系列可指定 <code>mp4</code> 或 <code>mov</code>。使用 2.0 系列时省略此项，输出为 MP4。</td></tr>
+                <tr><td><code>draft</code></td><td>布尔</td><td>设为 <code>true</code> 生成 2.5 标准版样片。找出合适的样片后，可用该任务 ID 生成正式视频。</td></tr>
+                <tr><td><code>omni_reference_task_type</code></td><td>字符串</td><td>2.5 系列全模态任务意图。<code>auto</code> 由模型判断，<code>reference</code> 生成新视频，<code>edit</code> 编辑，<code>extend</code> 延长。</td></tr>
+                <tr><td><code>tools</code></td><td>对象数组</td><td><code>[{"type":"web_search"}]</code> 允许模型按提示词决定是否搜索。</td></tr>
+                <tr><td><code>service_tier</code></td><td>字符串</td><td>支持在线推理 <code>default</code>。可以省略。</td></tr>
+                <tr><td><code>priority</code></td><td>整数</td><td>0–9，影响同一接入点的排队顺序。适用于 2.5 标准版与 2.0 系列。</td></tr>
+                <tr><td><code>execution_expires_after</code></td><td>整数</td><td>从提交起计算的超时秒数，3600–259200，方舟默认 172800。</td></tr>
+                <tr><td><code>safety_identifier</code></td><td>字符串</td><td>最多 64 个可见 ASCII 字符，用稳定的匿名值标识应用的终端用户。</td></tr>
+                <tr><td><code>callback_url</code></td><td>字符串</td><td>接收任务状态的公网 HTTPS 地址。详见<a href="#callbacks">回调参数与处理方法</a>。</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 id="content">输入项 <code>content</code></h3>
+          <div class="docs-table" tabindex="0" role="region" aria-label="输入项类型及角色">
+            <table>
+              <thead><tr><th scope="col"><code>type</code></th><th scope="col">数据字段</th><th scope="col">位置或用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>text</code></td><td><code>text</code>，最多 4000 字符</td><td>描述构图、人物或物体动作、镜头、节奏、台词或声音。</td></tr>
+                <tr><td><code>image_url</code></td><td><code>image_url.url</code></td><td><code>role</code> 可设为 <code>first_frame</code>、<code>last_frame</code> 或 <code>reference_image</code>（默认）。</td></tr>
+                <tr><td><code>video_url</code></td><td><code>video_url.url</code></td><td><code>role</code> 默认 <code>reference_video</code>。用于参考、编辑及延长。</td></tr>
+                <tr><td><code>audio_url</code></td><td><code>audio_url.url</code></td><td><code>role</code> 默认 <code>reference_audio</code>。2.0 系列需同时提供参考图或视频。</td></tr>
+                <tr><td><code>draft_task</code></td><td><code>draft_task.id</code></td><td>填写同一业务 Key 生成成功的 2.5 样片任务 ID。从样片成片时只发送这一个输入项。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>媒体地址可以是方舟可访问的公网 HTTPS 地址、处于 <code>Active</code> 的本站 <code>asset://</code> 引用，或本站返回的预置素材引用。图片和音频也可使用 Base64 数据 URL，例如 <code>data:image/png;base64,&lt;BASE64&gt;</code>。JSON 请求最多 64 MiB，内联图片和音频解码后分别最多 30 MiB 和 15 MiB。需要传入较大的文件时，请先上传或使用公网 HTTPS 链接。</p>
+          <p>内联格式包括 JPEG、PNG、WebP、BMP、TIFF、GIF、HEIC、HEIF，以及 WAV 和 MP3。视频须使用 HTTPS 或素材引用。</p>
+          <p><a href="https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh">方舟创建视频任务参数</a></p>
+        </section>
+
+        <section id="examples" aria-labelledby="examples-title">
+          <h2 id="examples-title">生成方式与示例</h2>
+          <p>把以下 JSON 作为<a href="#create-video">创建视频任务</a>的请求体。请将示例媒体地址和资源 ID 换成你自己的值。</p>
+          <h3 id="frames">首帧和首尾帧</h3>
+          <p>指定一个 <code>first_frame</code> 可用该图起始生成。再提供一个 <code>last_frame</code> 可约束结束画面。首帧或首尾帧任务可提供提示词，搭配其它参考视频或音频时应使用全模态参考任务。2.5 系列的帧模式填写 <code>ratio: "adaptive"</code> 或省略比例。</p>
+          <figure class="docs-example">
+            <figcaption>首尾帧生视频 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "model": "doubao-seedance-2.5",
+  "content": [
+    {"type":"text","text":"镜头沿石板路缓慢推进，光线从正午过渡到黄昏。"},
+    {"type":"image_url","role":"first_frame","image_url":{"url":"https://media.example.com/start.png"}},
+    {"type":"image_url","role":"last_frame","image_url":{"url":"https://media.example.com/end.png"}}
+  ],
+  "duration": 6,
+  "ratio": "adaptive",
+  "return_last_frame": true
+}</code></pre>
+          </figure>
+          <h3 id="multimodal">全模态参考</h3>
+          <p>把出镜角色、场景、动作和声音分别放到对应参考项，在提示词里说明每项的用途。2.5 系列可把 <code>omni_reference_task_type</code> 设为 <code>reference</code> 明确生成新视频。</p>
+          <figure class="docs-example">
+            <figcaption>混合参考图、视频和音频 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "model": "doubao-seedance-2.5-flash",
+  "content": [
+    {"type":"text","text":"采用图片1的舞台布局，参考视频1的运镜，跟随音频1的节奏切换景别。"},
+    {"type":"image_url","role":"reference_image","image_url":{"url":"asset://ast_REPLACE_WITH_IMAGE_ID"}},
+    {"type":"video_url","role":"reference_video","video_url":{"url":"https://media.example.com/motion.mp4"}},
+    {"type":"audio_url","role":"reference_audio","audio_url":{"url":"https://media.example.com/score.wav"}}
+  ],
+  "omni_reference_task_type": "reference",
+  "resolution": "720p",
+  "duration": 8,
+  "generate_audio": true
+}</code></pre>
+          </figure>
+          <h3 id="edit-extend">视频编辑与延长</h3>
+          <p>给 2.5 系列提交至少一个 <code>reference_video</code>，用 <code>edit</code> 编辑输入视频，用 <code>extend</code> 延长视频。两种方式的宽高比均随输入。编辑使用 <code>duration: -1</code>，作为编辑对象的视频时长须在 4–30 秒之间。2.0 系列在提示词中直接说明要变更或延长哪段视频。</p>
+          <figure class="docs-example">
+            <figcaption>编辑视频 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "model": "doubao-seedance-2.5",
+  "content": [
+    {"type":"text","text":"把视频1里的晴天改为薄雾清晨，保持原镜头运动和人物动作。"},
+    {"type":"video_url","role":"reference_video","video_url":{"url":"https://media.example.com/original.mp4"}}
+  ],
+  "omni_reference_task_type": "edit",
+  "ratio": "adaptive",
+  "duration": -1,
+  "output_format": "mov"
+}</code></pre>
+          </figure>
+          <figure class="docs-example">
+            <figcaption>向后延长视频 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "model": "doubao-seedance-2.5",
+  "content": [
+    {"type":"text","text":"从视频1的结尾继续，镜头跟拍电车驶进隧道，保留原画幅比例。"},
+    {"type":"video_url","role":"reference_video","video_url":{"url":"https://media.example.com/original.mp4"}}
+  ],
+  "omni_reference_task_type": "extend",
+  "ratio": "adaptive",
+  "duration": 5
+}</code></pre>
+          </figure>
+          <h3 id="draft">用样片生成正式视频</h3>
+          <ol>
+            <li>选择 <code>doubao-seedance-2.5</code>，提交常规输入，并设置 <code>draft: true</code> 和 <code>resolution: "480p"</code>。</li>
+            <li>用创建样片的业务 Key 轮询，保存成功样片的本站任务 ID。当前创建的样片可在创建后 14 天内用于成片。</li>
+            <li>用同一业务 Key 创建成片任务。把原任务 ID 放入 <code>draft_task.id</code>，并指定 <code>resolution</code> 为 <code>1080p</code> 或 <code>4k</code>。成片自动继承样片的提示词、媒体、比例、时长、随机种子和音频设置。</li>
+          </ol>
+          <figure class="docs-example">
+            <figcaption>使用成功样片生成 1080p 成片 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "model": "doubao-seedance-2.5",
+  "content": [
+    {"type":"draft_task","draft_task":{"id":"vid_REPLACE_WITH_DRAFT_ID"}}
+  ],
+  "resolution": "1080p"
+}</code></pre>
+          </figure>
+          <h3 id="web-search">联网搜索</h3>
+          <p>给创建请求添加 <code>"tools": [{"type":"web_search"}]</code>，并在提示词中说明需要查询的当下信息。Seedance 2.0 系列使用联网搜索时只接受文本输入。查询成功任务时，从 <code>usage.tool_usage.web_search</code> 读取实际搜索次数。返回 <code>0</code> 表示模型未执行搜索。</p>
+        </section>
+
+        <section id="tasks" aria-labelledby="tasks-title">
+          <h2 id="tasks-title">查询与管理任务</h2>
+          <h3 id="get-task">查询单个任务</h3>
+          <p class="docs-route"><strong>GET</strong><code>/api/v3/contents/generations/tasks/{id}</code></p>
+          <p>使用创建时的业务 Key 和本站返回的 <code>vid_…</code>。排队或运行中的任务会查询最新状态。终态任务返回已记录的结果。</p>
+          <p>结果可包含实际的 <code>resolution</code>、<code>duration</code>、<code>ratio</code>、<code>output_format</code> 与 <code>framespersecond</code>，以方舟实际返回为准。<code>created_at</code> 和 <code>updated_at</code> 为 Unix 秒。<code>draft</code> 标识样片，<code>draft_task_id</code> 指向本站样片任务。若发送了 <code>safety_identifier</code>，结果中的值为项目范围内的匿名摘要。</p>
+          <figure class="docs-example">
+            <figcaption>任务成功响应示例 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "id": "vid_0123456789abcdef0123456789abcdef",
+  "model": "doubao-seedance-2.5",
+  "status": "succeeded",
+  "duration": 5,
+  "resolution": "720p",
+  "ratio": "16:9",
+  "content": {
+    "video_url": "https://media.example.com/generated.mp4"
+  },
+  "usage": {
+    "completion_tokens": 108000,
+    "total_tokens": 108000
+  }
+}</code></pre>
+          </figure>
+          <div class="docs-table" tabindex="0" role="region" aria-label="任务状态">
+            <table>
+              <thead><tr><th scope="col"><code>status</code></th><th scope="col">客户端处理</th></tr></thead>
+              <tbody>
+                <tr><td><code>submitting</code>、<code>queued</code>、<code>running</code></td><td>等待并轮询，建议从 3 秒一次开始。批量任务应退避并避免同时轮询。</td></tr>
+                <tr><td><code>succeeded</code></td><td>读取 <code>content</code> 和 <code>usage</code>。</td></tr>
+                <tr><td><code>failed</code>、<code>expired</code>、<code>cancelled</code></td><td>停止轮询。核对错误或超时条件后，可按新的请求创建后续任务。</td></tr>
+                <tr><td><code>submission_unknown</code>、<code>submission_failed</code></td><td>保存任务 ID。提交结果不明时用原幂等键核对，避免重复生成。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="docs-note">生成视频链接由方舟提供，有效期为 24 小时。需要留存视频时请在有效期内下载。任务记录和用量仍可查询，Richi 火山模型 不会自动另存生成视频或延长链接。</p>
+
+          <h3 id="list-tasks">查询任务列表</h3>
+          <p class="docs-route"><strong>GET</strong><code>/api/v3/contents/generations/tasks</code></p>
+          <p>返回 <code>{"total": …, "items": […]}</code>，每项结构与单任务查询一致。查询范围是当前业务 Key 创建的任务，列表使用最近已记录状态。查询全项目时使用工作台的「任务记录」。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="任务列表筛选参数">
+            <table>
+              <thead><tr><th scope="col">查询参数</th><th scope="col">用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>page_num</code>、<code>page_size</code></td><td>默认第 1 页、每页 20 项。两项均为 1–500。</td></tr>
+                <tr><td><code>filter.status</code></td><td>按任务状态筛选。</td></tr>
+                <tr><td><code>filter.model</code></td><td>按业务模型别名筛选。</td></tr>
+                <tr><td><code>filter.task_ids</code></td><td>按本站任务 ID 筛选，可重复传入，最多 500 项。</td></tr>
+                <tr><td><code>filter.service_tier</code></td><td>按服务层级筛选，查询参数接受 <code>default</code> 或 <code>flex</code>。本站新建 Seedance 2.x 任务使用 <code>default</code>。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <figure class="docs-example">
+            <figcaption>列出最近 20 个已成功任务 · Shell</figcaption>
+            <pre tabindex="0"><code>curl -fSs "$BASE_URL/api/v3/contents/generations/tasks?page_num=1&amp;page_size=20&amp;filter.status=succeeded" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </figure>
+          <h3 id="delete-task">取消或删除任务记录</h3>
+          <p class="docs-route"><strong>DELETE</strong><code>/api/v3/contents/generations/tasks/{id}</code></p>
+          <p>排队任务可以取消，取消后可查询 <code>cancelled</code> 状态。运行中的任务返回 <code>409 video_task_not_cancellable</code>。成功、失败、超时或提交失败的任务可从任务查询和任务记录中删除，已产生的用量与账单仍保留。已取消的任务可通过 <code>?delete_cancelled=true</code> 删除。成功操作返回 HTTP <code>200</code> 和 <code>{}</code>。</p>
+          <p>收到 <code>502 video_cancellation_unknown</code> 时保留任务 ID，用单任务查询核对。结果含 <code>cancellation_pending: true</code> 时，方舟尚未确认取消。本站保留已有状态和用量，并避免重复发送取消请求。</p>
+          <figure class="docs-example">
+            <figcaption>取消排队任务 · Shell</figcaption>
+            <pre tabindex="0"><code>curl -fSs -X DELETE "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
+  -H "Authorization: Bearer $API_KEY"</code></pre>
+          </figure>
+        </section>
+
+        <section id="assets" aria-labelledby="assets-title">
+          <h2 id="assets-title">上传与登记素材</h2>
+          <p>有可访问的公网 HTTPS 地址时，可以直接登记。文件在本地时，先上传获得 <code>uploadId</code>，再用同一业务 Key 登记。登记时指定本站素材组和正确的媒体类型。</p>
+          <h3 id="asset-upload">上传本地文件</h3>
+          <p class="docs-route"><strong>POST</strong><code>/api/asset/upload-file</code></p>
+          <p>使用 <code>multipart/form-data</code>，必填 <code>file</code>，可选 <code>assetType</code>。系统按文件内容校验类型和大小。响应包含 <code>uploadId</code>、<code>assetType</code>、<code>contentType</code>、<code>sizeBytes</code>、<code>status</code> 与 UTC <code>expiresAt</code>。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="本地文件上传限制">
+            <table>
+              <thead><tr><th scope="col"><code>assetType</code></th><th scope="col">格式</th><th scope="col">单个文件上限</th></tr></thead>
+              <tbody>
+                <tr><td><code>Image</code></td><td>JPEG、PNG、WebP、GIF、BMP、TIFF</td><td>30 MiB</td></tr>
+                <tr><td><code>Video</code></td><td>MP4、MOV</td><td>200 MiB</td></tr>
+                <tr><td><code>Audio</code></td><td>WAV、MP3</td><td>15 MiB</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <figure class="docs-example">
+            <figcaption>上传本地图片 · Shell</figcaption>
+            <pre tabindex="0"><code>curl -fSs "$BASE_URL/api/asset/upload-file" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Idempotency-Key: upload-forest-001' \
+  -F 'file=@./forest.png;type=image/png' \
+  -F 'assetType=Image'</code></pre>
+          </figure>
+          <p>首次上传返回 HTTP <code>201</code>。同一业务 Key 用原幂等键上传原文件时，已成功的记录返回 <code>200</code>。可用 <code>GET /api/asset/upload-file/{uploadId}</code> 查询暂存状态。文件默认暂存 48 小时，登记的素材由方舟处理。</p>
+          <h3 id="register-asset">创建素材组并登记</h3>
+          <p>先调 <code>POST /api/asset-group/create</code>，请求体包含 <code>name</code> 和可选 <code>description</code>。从响应 <code>group.id</code> 取出本站素材组 ID。</p>
+          <p class="docs-route"><strong>POST</strong><code>/api/asset/create</code></p>
+          <figure class="docs-example">
+            <figcaption>登记刚上传的文件 · JSON</figcaption>
+            <pre tabindex="0"><code>{
+  "groupId": "grp_REPLACE_WITH_GROUP_ID",
+  "uploadId": "upl_REPLACE_WITH_UPLOAD_ID",
+  "name": "山林场景",
+  "assetType": "Image"
+}</code></pre>
+          </figure>
+          <p>已经托管在公网的文件可用 <code>url</code> 替换 <code>uploadId</code>，两者填写一项。登记成功返回 HTTP <code>201</code> 和 <code>asset.id</code>。用同一 <code>uploadId</code> 重复提交等价请求可复用已登记的素材。若上游登记结果不明，先按<a href="#errors">错误码</a>核对。</p>
+          <h3 id="reference-asset">查询素材并用于生成</h3>
+          <p class="docs-route"><strong>GET</strong><code>/api/asset/get?assetId={assetId}</code></p>
+          <p>素材可能为 <code>Processing</code>、<code>Active</code> 或 <code>Failed</code>。<code>Active</code> 时返回 <code>asset.reference</code>，可填入对应的 <code>image_url.url</code>、<code>video_url.url</code> 或 <code>audio_url.url</code>。上传记录按业务 Key 隔离，登记后的素材在所属项目内可用。用本站标识调用这些接口。</p>
+          <p>需要使用已获授权的真人肖像时，请先通过<a href="#liveness">方舟授权流程</a>创建对应素材组。</p>
+          <p><a href="https://docs.volcengine.com/docs/ark/guide-preview?lang=zh">方舟素材库接入指南</a></p>
+        </section>
+
+        <section id="asset-management" aria-labelledby="asset-management-title">
+          <h2 id="asset-management-title">管理素材与素材组</h2>
+          <div class="docs-table" tabindex="0" role="region" aria-label="素材管理接口">
+            <table>
+              <thead><tr><th scope="col">接口</th><th scope="col">参数</th><th scope="col">响应</th></tr></thead>
+              <tbody>
+                <tr><td><code>POST /api/asset-group/create</code></td><td>JSON <code>name</code>，可选 <code>description</code></td><td>201 <code>{group}</code></td></tr>
+                <tr><td><code>GET /api/asset-group/list</code></td><td>查询参数 <code>pageNumber</code>、<code>pageSize</code>、<code>sortOrder</code>、<code>groupType</code>，可按 <code>name</code> 搜索及重复传 <code>groupId</code></td><td>200 <code>{groups}</code></td></tr>
+                <tr><td><code>GET /api/asset-group/get</code></td><td>查询参数 <code>groupId</code></td><td>200 <code>{group}</code></td></tr>
+                <tr><td><code>POST /api/asset-group/update</code></td><td>JSON <code>groupId</code>，至少提供 <code>name</code>、<code>description</code> 之一</td><td>200 <code>{group}</code></td></tr>
+                <tr><td><code>POST /api/asset-group/delete</code></td><td>JSON <code>groupId</code></td><td>204，无响应体。组内素材引用将同时失效。</td></tr>
+                <tr><td><code>POST /api/asset/create</code></td><td>JSON <code>groupId</code>、<code>name</code>、<code>assetType</code>，以及 <code>url</code> 或 <code>uploadId</code></td><td>201 <code>{asset}</code>，重放已有登记时为 200</td></tr>
+                <tr><td><code>GET /api/asset/list</code></td><td>查询参数 <code>pageNumber</code>、<code>pageSize</code>、<code>sortOrder</code>、<code>name</code>、<code>assetType</code>、<code>groupType</code>，可重复传 <code>groupId</code> 和 <code>status</code></td><td>200 <code>{assets}</code></td></tr>
+                <tr><td><code>GET /api/asset/get</code></td><td>查询参数 <code>assetId</code></td><td>200 <code>{asset}</code></td></tr>
+                <tr><td><code>POST /api/asset/update</code></td><td>JSON <code>assetId</code>、<code>name</code></td><td>200 <code>{asset}</code></td></tr>
+                <tr><td><code>POST /api/asset/delete</code></td><td>JSON <code>assetId</code></td><td>204，无响应体。素材引用将失效。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>列表默认第 1 页、每页 20 项，每页最多 100 项。<code>sortOrder</code> 设为 <code>asc</code> 或 <code>desc</code> 按创建时间排序，默认 <code>desc</code>。<code>name</code> 匹配名称的一部分。<code>groupId</code> 最多传入 100 项，<code>status</code> 最多传入 3 项。<code>groupType</code> 可设为 <code>AIGC</code> 或 <code>LivenessFace</code>。素材组名称最多 255 字符，说明最多 300 字符。素材名称最多 64 字符。读取或修改单个素材或素材组时，若资源不属于当前项目则返回 <code>404</code>。</p>
+          <h3 id="liveness">创建已授权的真人素材组</h3>
+          <p>真人肖像授权由本人在方舟授权页完成。需要实例的方舟账号开通相应权益。</p>
+          <ol>
+            <li>调用 <code>POST /api/asset-group/liveness/start</code>，提交 JSON <code>{"callbackUrl":"https://example.com/consent-return"}</code>。HTTP <code>201</code> 返回 <code>sessionId</code>、<code>authorizationUrl</code> 和 <code>expiresAt</code>。在自己服务端保存会话 ID，并请本人在有效期内打开授权链接。</li>
+            <li>用户完成授权并回到你的 <code>callbackUrl</code> 后，接收方舟返回的 <code>bytedToken</code>。由你的服务端使用同一业务 Key 调用 <code>POST /api/asset-group/liveness/complete</code>，传入 <code>{"sessionId":"…","bytedToken":"…"}</code>。</li>
+            <li>方舟确认授权后，HTTP <code>200</code> 返回 <code>{group}</code>，组类型为 <code>LivenessFace</code>。用返回的 <code>group.id</code> 登记已授权素材。尚未确认或会话过期时返回 <code>409</code>。</li>
+          </ol>
+          <p>授权会话最长 180 秒。完成接口会向方舟核对授权结果，回跳参数中的 <code>resultCode</code> 只用于展示。使用同一业务 Key 和已成功的会话请求重试时，复用已创建的素材组。 <a href="https://docs.volcengine.com/docs/ark/h5-create-visual-validate-session-api?lang=zh">方舟 H5 授权接口</a></p>
+          <h3 id="presets">使用方舟预置素材</h3>
+          <p class="docs-route"><strong>GET</strong><code>/api/asset/presets</code></p>
+          <p>响应和普通业务请求使用同一 Bearer 鉴权。<code>items</code> 每项包含 <code>id</code>、<code>name</code>、<code>assetType</code>、<code>reference</code>。把返回的 <code>asset://preset_…</code> 填到对应的输入项。列表来自运营配置，尚未配置时返回空数组。 <a href="https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh">方舟 2.5 教程 · 角色参考</a></p>
+          <p>将本账号生成的视频用于二次创作时，可以在有效期内把任务结果的原始 <code>content.video_url</code> 用作 <code>reference_video</code>。方舟根据账号与生成结果核验可用性。Richi 火山模型 保留任务 ID 和结果地址，不额外保存视频文件。</p>
+        </section>
+
+        <section id="callbacks" aria-labelledby="callbacks-title">
+          <h2 id="callbacks-title">接收任务回调</h2>
+          <p>在创建请求中填写可访问的公网 HTTPS 地址（端口 443，最多 2048 个字符），例如 <code>https://example.com/events/video</code>。Richi 火山模型 观察到任务状态变化后，向 <code>callback_url</code> 发送 HTTP <code>POST</code>。JSON 正文结构与<a href="#get-task">单任务查询</a>一致，使用本站任务 ID。回调目标须直接响应，不跟随重定向。</p>
+          <p>任务排队、运行、成功、失败、取消和超时均可触发通知，提交失败或状态未知时也会通知。事件在同一任务内按顺序投递。连接失败或未收到 2xx 时，最多重试五次。重试间隔为 5 秒、30 秒、2 分钟、10 分钟和 30 分钟，队列执行可能延后。撤销业务 Key 会停止排队中的投递。也可用轮询补查结果。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="回调请求头">
+            <table>
+              <thead><tr><th scope="col">请求头</th><th scope="col">用途</th></tr></thead>
+              <tbody>
+                <tr><td><code>X-Richi-Event-Id</code></td><td>事件唯一标识，用于对重复投递去重。</td></tr>
+                <tr><td><code>X-Richi-Timestamp</code></td><td>Unix 时间戳，秒。用来检查签名时效。</td></tr>
+                <tr><td><code>X-Richi-Signature</code></td><td><code>sha256=</code> 前缀和 HMAC-SHA256 十六进制摘要。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>使用创建任务时的业务 Key 验证签名。以该 Key 的 SHA-256 二进制摘要作为 HMAC 密钥。签名输入由时间戳、圆点、事件 ID、圆点和原始正文按顺序拼接。验证后按事件 ID 去重，持久化结果后返回 2xx。</p>
+          <figure class="docs-example">
+            <figcaption>按原始请求体验签 · Python</figcaption>
+            <pre tabindex="0"><code>import hashlib
+import hmac
+import time
+
+def verify_callback(api_key, timestamp, event_id, signature, raw_body):
+    if not all(isinstance(value, str) and value for value in (timestamp, event_id, signature)):
+        return False
+    try:
+        if abs(time.time() - int(timestamp)) &gt; 300:
+            return False
+        prefix = f"{timestamp}.{event_id}.".encode("ascii")
+    except (TypeError, ValueError):
+        return False
+    key = hashlib.sha256(api_key.encode("utf-8")).digest()
+    expected = "sha256=" + hmac.new(key, prefix + raw_body, "sha256").hexdigest()
+    return hmac.compare_digest(expected.encode("ascii"), signature.encode("utf-8"))</code></pre>
+          </figure>
+        </section>
+
+        <section id="errors" aria-labelledby="errors-title">
+          <h2 id="errors-title">错误与重试</h2>
+          <p>错误响应通常包含 <code>detail.code</code> 和 <code>detail.message</code>。需要保留任务或上传标识时，还可能返回 <code>detail.task_id</code> 或 <code>detail.uploadId</code>。</p>
+          <div class="docs-table" tabindex="0" role="region" aria-label="常见错误和处理">
+            <table>
+              <thead><tr><th scope="col">HTTP 状态与错误码</th><th scope="col">处理方式</th></tr></thead>
+              <tbody>
+                <tr><td><code>401 invalid_api_key</code></td><td>检查 <code>Authorization</code> 格式、Key 是否撤销或复制完整。</td></tr>
+                <tr><td><code>404 video_task_not_found</code>、<code>asset_not_found</code>、<code>upload_not_found</code></td><td>检查资源 ID、入口和所属项目。视频任务与上传记录必须使用原业务 Key。</td></tr>
+                <tr><td><code>409 idempotency_conflict</code>、<code>idempotency_key_conflict</code></td><td>同一幂等键绑定了不同请求。原请求使用原内容，新任务或新文件使用新的幂等键。</td></tr>
+                <tr><td><code>409 video_submission_pending</code>、<code>502 video_submission_unknown</code></td><td>保存任务 ID。用原幂等键和原请求核对提交，避免用新键立即发起生成。</td></tr>
+                <tr><td><code>409 video_cancellation_pending</code>、<code>502 video_cancellation_unknown</code></td><td>取消结果待确认。稍后查询原任务状态，再决定是否重试取消。</td></tr>
+                <tr><td><code>404 video_draft_not_found</code>、<code>410 video_draft_expired</code></td><td>使用同一业务 Key 下成功且仍有效的样片，或重新生成样片。</td></tr>
+                <tr><td><code>409 upload_registration_pending</code>、<code>upload_expired</code>、<code>asset_not_active</code></td><td>登记待核对时保留上传 ID，过期后重新上传，素材处理中继续查询直到 <code>Active</code>。</td></tr>
+                <tr><td><code>409 asset_deletion_pending</code>、<code>502 asset_mutation_unknown</code></td><td>素材变更结果待确认。删除请求可带原资源 ID 重试，确认删除后重复提交返回 <code>204</code>。</td></tr>
+                <tr><td><code>413 file_too_large</code>、<code>video_request_too_large</code>、<code>415 media_type_mismatch</code>、<code>422 invalid_request</code></td><td>检查大小、编码、请求字段和模型能力，修改后再提交。</td></tr>
+                <tr><td><code>429 key_concurrency_exceeded</code></td><td>本业务 Key 的视频任务并发已满。已有任务结束后再提交，重试同一请求沿用原幂等键。</td></tr>
+                <tr><td><code>429 key_rpm_exceeded</code></td><td>本业务 Key 已达最近 60 秒请求上限。按响应头 <code>Retry-After</code> 指定的秒数等待后重试。查询和素材操作也占用请求额度。</td></tr>
+                <tr><td><code>429 video_daily_limit</code></td><td>项目每日提交上限已达。默认每项目 5 次，北京时间自然日计算。</td></tr>
+                <tr><td><code>502 video_status_unavailable</code>、<code>503 provider_unavailable</code></td><td>查询按退避策略重试。有任务 ID 时查已有任务。服务未配置时联系运营核对。</td></tr>
+                <tr><td><code>503 video_callback_unavailable</code></td><td>当前实例未开启回调投递。可省略 <code>callback_url</code>，通过查询接口跟踪任务。</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>幂等键支持 1–128 个可见 ASCII 字符。使用同一业务 Key 与幂等键重放相同请求，会复用原任务。一个新的业务请求使用新键。若网络中断需要跨进程重试，请先保存请求体和幂等键。</p>
+        </section>
+
+        <section id="usage" aria-labelledby="usage-title">
+          <h2 id="usage-title">用量与账单</h2>
+          <p>成功结果携带方舟返回的实际输出量 <code>usage.completion_tokens</code>。联网搜索次数单列在 <code>usage.tool_usage.web_search</code>，可按返回值做本地统计。未返回的用量保持缺失。</p>
+          <p>「用量与账单」按项目查看实际输出 Token 和费用。客户费用按约定模型、生成分辨率、是否含参考视频及有效价目计算。项目未开启计费时显示未计费，已开启但缺少计价资料时显示待计价。</p>
+          <p><a href="https://docs.volcengine.com/docs/ark/model-pricing?lang=zh&amp;redirect=1">方舟上游用量和公开计价说明</a></p>
+        </section>
+
+        <section id="official" aria-labelledby="official-title">
+          <h2 id="official-title">方舟参考文档</h2>
+          <ul>
+            <li><a href="https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh">创建视频生成任务</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/get-video-generation-task-api?lang=zh">查询视频生成任务</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/list-video-generation-tasks-api?lang=zh">查询视频生成任务列表</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/cancel-or-delete-video-generation-tasks-api?lang=zh">取消或删除视频生成任务</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh">Seedance 2.5 系列教程</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/seedance-2-0?lang=zh">Seedance 2.0 系列教程</a></li>
+            <li><a href="https://docs.volcengine.com/docs/ark/guide-preview?lang=zh">素材资产管理指南</a></li>
+          </ul>
+        </section>
+      </main>
+    </div>
+    <footer class="public-footer page-width">
+      <span>Richi 火山模型</span><a href="/console/">客户工作台</a>
+    </footer>
+  </body>
+</html>

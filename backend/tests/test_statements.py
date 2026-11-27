@@ -19,6 +19,7 @@ from app import billing, statements
 from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.main import create_app
+from app.model_access import HISTORICAL_MODEL_LABEL, set_seedance_access
 
 
 MODEL = "doubao-seedance-2.5"
@@ -58,6 +59,8 @@ def _customer(client: TestClient, name: str = "alice") -> Customer:
     response = client.post("/api/customer/register", json={"email": f"{name}@example.com", "password": "Example-only-pass-42"})
     assert response.status_code == 201, response.text
     account = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
     created = client.post(
         "/api/customer/keys", headers={"X-CSRF-Token": account["csrfToken"]}, json={"name": "statement test"},
     )
@@ -248,6 +251,18 @@ def test_statement_detail_and_csv_are_session_scoped_and_escape_formulas(tmp_pat
         assert {row["month"] for row in rows} == {JANUARY}
         assert {row["model"] for row in rows} == {f"'{model}" for model in models}
         assert {row["taskId"] for row in rows} == {f"vid_csv_{number}" for number in range(4)}
+
+        with client.app.state.db.connect() as connection:
+            set_seedance_access(connection, alice.project_id, False)
+        hidden = client.get(detail, headers=alice.session).json()
+        assert hidden["summary"] == statement["summary"]
+        assert {row["model"] for row in hidden["items"]} == {HISTORICAL_MODEL_LABEL}
+        exported = client.get(export, headers=alice.session)
+        rows = list(csv.DictReader(io.StringIO(exported.content.decode("utf-8-sig"))))
+        assert {row["model"] for row in rows} == {HISTORICAL_MODEL_LABEL}
+        assert {row["taskId"] for row in rows} == {f"vid_csv_{number}" for number in range(4)}
+        with client.app.state.db.connect() as connection:
+            assert statements.confirmed_statement(connection, alice.project_id, statement["id"])["items"] == statement["items"]
 
 
 def test_concurrent_confirmation_creates_one_statement_and_one_snapshot(tmp_path: Path) -> None:

@@ -152,7 +152,37 @@ function ProjectKeys({ projectId, onExpired, csrfToken }) {
   );
 }
 
-function ProjectDetail({ project, onExpired, csrfToken }) {
+function ProjectModelAccess({ project, csrfToken, onExpired, onSaved }) {
+  const mutation = useAdminMutation(onExpired);
+  const [notice, setNotice] = useState('');
+  const enabled = project.seedanceEnabled === true;
+
+  async function save() {
+    setNotice('');
+    const result = await mutation.run(() => adminApi.updateModelAccess(project.id, !enabled, csrfToken));
+    if (result) {
+      onSaved(project.id, result.seedanceEnabled);
+      setNotice(result.seedanceEnabled ? 'Seedance 已授权。' : 'Seedance 授权已撤销。');
+    }
+  }
+
+  return (
+    <>
+      <div className="admin-toolbar">
+        <div>
+          <h3>Seedance 视频模型</h3>
+          <p>{enabled ? '已授权' : '未授权'}。授权包含视频 API、体验入口、素材管理和视频开发者文档。</p>
+          <p>适用于此客户项目下的所有业务 Key。</p>
+        </div>
+        <button type="button" className={`button ${enabled ? 'secondary' : 'primary'}`} onClick={save}
+          disabled={mutation.busy}>{mutation.busy ? '正在保存…' : enabled ? '撤销授权' : '授权 Seedance'}</button>
+      </div>
+      <Message error={mutation.error} notice={notice} />
+    </>
+  );
+}
+
+function ProjectDetail({ project, onExpired, csrfToken, onModelAccessSaved }) {
   const [section, setSection] = useState('usage');
   return (
     <section className="admin-panel admin-project-detail" aria-labelledby="admin-project-email">
@@ -170,6 +200,7 @@ function ProjectDetail({ project, onExpired, csrfToken }) {
           ['statements', '月账单'],
           ['terms', '计费条款'],
           ['keys', '业务 Key'],
+          ['models', '模型授权'],
         ].map(([id, text]) => (
           <button key={id} type="button" aria-pressed={section === id} onClick={() => setSection(id)}>{text}</button>
         ))}
@@ -179,6 +210,8 @@ function ProjectDetail({ project, onExpired, csrfToken }) {
         {section === 'statements' && <Statements project={project} onExpired={onExpired} csrfToken={csrfToken} />}
         {section === 'terms' && <ProjectTerms projectId={project.id} onExpired={onExpired} csrfToken={csrfToken} />}
         {section === 'keys' && <ProjectKeys projectId={project.id} onExpired={onExpired} csrfToken={csrfToken} />}
+        {section === 'models' && <ProjectModelAccess project={project} onExpired={onExpired} csrfToken={csrfToken}
+          onSaved={onModelAccessSaved} />}
       </div>
     </section>
   );
@@ -204,6 +237,11 @@ export function Projects({ onExpired, csrfToken }) {
     setSearch(project.email);
     setQuery({ q: project.email, page: 1 });
     setNotice('客户项目已开通。');
+  }
+
+  function updateSelectedAccess(projectId, seedanceEnabled) {
+    setSelected((current) => current?.id === projectId ? { ...current, seedanceEnabled } : current);
+    resource.reload();
   }
 
   return (
@@ -242,7 +280,8 @@ export function Projects({ onExpired, csrfToken }) {
             </>
           )}</LoadState>
         </section>
-        {selected ? <ProjectDetail key={selected.id} project={selected} onExpired={onExpired} csrfToken={csrfToken} /> : (
+        {selected ? <ProjectDetail key={selected.id} project={selected} onExpired={onExpired} csrfToken={csrfToken}
+          onModelAccessSaved={updateSelectedAccess} /> : (
           <div className="admin-panel admin-project-empty">
             <p>选择一个客户项目，查看用量和月账单。</p>
           </div>

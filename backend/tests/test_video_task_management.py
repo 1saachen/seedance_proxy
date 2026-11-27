@@ -7,9 +7,11 @@ import socket
 
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH, poll_unfinished
 from app import video_callbacks
 
@@ -29,7 +31,10 @@ def _account(client, email):
     client.cookies.clear()
     response = client.post("/api/customer/register", json={"email": email, "password": "example-password"})
     assert response.status_code == 201
-    return response.json()["csrfToken"]
+    account = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
+    return account["csrfToken"]
 
 
 def _new_key(client, csrf):
@@ -205,19 +210,25 @@ def test_callbacks_retry_in_order_with_stable_event_ids_and_signed_local_payload
             assert connection.execute("SELECT COUNT(*) FROM video_callback_events").fetchone()[0] == 0
 
 
-def test_revoked_key_discards_queued_callbacks_before_delivery(tmp_path):
+@pytest.mark.parametrize("revoke_project", [False, True])
+def test_revoked_access_discards_queued_callbacks_before_delivery(tmp_path, revoke_project):
     provider = ArkTasks()
     with _test_client(tmp_path, provider, callback_poll_seconds=300) as client:
         csrf = _account(client, "callback@example.com")
         owner = _new_key(client, csrf)
         _submit(client, owner, callback_url="https://callback.example.com/events")
-        key_id = client.get("/api/customer/keys").json()["keys"][0]["id"]
-        assert client.delete(f"/api/customer/keys/{key_id}", headers={"X-CSRF-Token": csrf}).status_code == 204
+        database = client.app.state.db
+        if revoke_project:
+            project_id = client.get("/api/customer/me").json()["customer"]["projectId"]
+            with database.connect() as connection:
+                set_seedance_access(connection, project_id, False)
+        else:
+            key_id = client.get("/api/customer/keys").json()["keys"][0]["id"]
+            assert client.delete(f"/api/customer/keys/{key_id}", headers={"X-CSRF-Token": csrf}).status_code == 204
 
         async def unexpected_send(*_):
             raise AssertionError("revoked key still receives callbacks")
 
-        database = client.app.state.db
         assert asyncio.run(video_callbacks.deliver_due(database, unexpected_send)) == 0
         with database.connect() as connection:
             assert connection.execute("SELECT COUNT(*) FROM video_task_callbacks").fetchone()[0] == 0

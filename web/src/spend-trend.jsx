@@ -1,12 +1,6 @@
 import { formatNumber } from './workbench-format.jsx';
 
-const modelColors = {
-  'doubao-seedance-2.5': '#2448df',
-  'doubao-seedance-2.5-flash': '#167e72',
-  'doubao-seedance-2.0': '#6654b9',
-  'doubao-seedance-2.0-fast': '#b26724',
-  'doubao-seedance-2.0-mini': '#2e7197',
-};
+const modelColors = ['#2448df', '#167e72', '#6654b9', '#b26724', '#2e7197'];
 
 function yuan(amount) {
   return amount == null ? '—' : `¥${amount}`;
@@ -27,7 +21,10 @@ function scaleFor(days) {
 }
 
 function modelColor(model) {
-  return Object.hasOwn(modelColors, model) ? modelColors[model] : '#63778d';
+  if (typeof model !== 'string' || !model) return '#63778d';
+  let hash = 0;
+  for (const character of model) hash = (hash * 33 + character.codePointAt(0)) >>> 0;
+  return modelColors[hash % modelColors.length];
 }
 
 function SpendDay({ day, limit }) {

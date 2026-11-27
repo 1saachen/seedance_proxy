@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH
 
 
@@ -42,6 +43,8 @@ def register(client, name):
     })
     assert response.status_code == 201
     payload = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, payload["customer"]["projectId"], True)
     headers = {"Cookie": f"{SESSION_COOKIE}={response.cookies[SESSION_COOKIE]}"}
     client.cookies.clear()
     return payload["customer"]["projectId"], headers, {**headers, "X-CSRF-Token": payload["csrfToken"]}

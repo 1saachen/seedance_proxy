@@ -49,6 +49,7 @@ export const customerApi = {
     }
     return request(`/usage?${query}`, { signal });
   },
+  modelUsage: (month, signal) => request(`/model-usage?${new URLSearchParams({ month })}`, { signal }),
   billing: (month, page, signal) => request(`/billing?${new URLSearchParams({ month, page, pageSize: 50 })}`, { signal }),
   billingExportUrl: (id) =>
     typeof id === 'string' && /^stmt_[0-9a-f]{32}$/.test(id) ? `${customerPath}/billing/${id}/export.csv` : null,

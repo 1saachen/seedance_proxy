@@ -219,6 +219,7 @@ def test_admin_usage_and_frozen_bill_reuse_the_customer_ledger(tmp_path: Path) -
         other = _create_project(client, csrf, "other@example.com")
         project_id = project["id"]
         base = f"{ADMIN}/projects/{project_id}"
+        assert client.put(f"{base}/model-access", headers=csrf, json={"seedanceEnabled": True}).status_code == 200
         key = _customer_key(client, project["email"])["key"]["id"]
         other_key = _customer_key(client, other["email"])["key"]["id"]
 
@@ -325,7 +326,7 @@ def test_admin_writes_roll_back_if_auditing_fails(tmp_path: Path) -> None:
         with client.app.state.db.connect() as connection:
             connection.execute("""
                 CREATE TRIGGER fail_audit BEFORE INSERT ON admin_audit
-                WHEN NEW.action IN ('customer.create', 'billing.statement.confirm')
+                WHEN NEW.action IN ('customer.create', 'billing.statement.confirm', 'project.model_access.update')
                 BEGIN SELECT RAISE(ABORT, 'synthetic audit failure'); END
             """)
 
@@ -337,3 +338,6 @@ def test_admin_writes_roll_back_if_auditing_fails(tmp_path: Path) -> None:
         with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
             client.post(f"{bill_url}/confirm", headers=csrf)
         assert client.get(bill_url).json()["status"] == "estimate"
+        with pytest.raises(sqlite3.IntegrityError, match="synthetic audit failure"):
+            client.put(f"{ADMIN}/projects/{project['id']}/model-access", headers=csrf, json={"seedanceEnabled": True})
+        assert client.get(f"{ADMIN}/projects").json()["items"][0]["seedanceEnabled"] is False

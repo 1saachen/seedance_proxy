@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import accounts, billing, key_limits, official_price_import, statements, usage, volcengine_prices
+from . import accounts, billing, key_limits, model_access, official_price_import, statements, usage, volcengine_prices
 from .admin_auth import CurrentAdmin, record_audit
 from .model_api import SEEDANCE_MODELS
 
@@ -65,6 +65,12 @@ class KeyLimitChange(BaseModel):
     rpm_limit: int | None = Field(alias="rpmLimit", ge=1, le=key_limits.MAX_RPM_LIMIT, strict=True)
 
 
+class ModelAccessChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    seedance_enabled: bool = Field(alias="seedanceEnabled", strict=True)
+
+
 def _error(status: int, code: str, message: str) -> HTTPException:
     return HTTPException(status, {"code": code, "message": message})
 
@@ -117,12 +123,16 @@ def projects(
             """
             SELECT project.id, project.created_at AS createdAt, customer.id AS customerId, customer.email,
                 (SELECT COUNT(*) FROM business_keys WHERE project_id = project.id AND revoked_at IS NULL) AS activeKeys,
-                (SELECT COUNT(*) FROM business_keys WHERE project_id = project.id AND revoked_at IS NOT NULL) AS revokedKeys
+                (SELECT COUNT(*) FROM business_keys WHERE project_id = project.id AND revoked_at IS NOT NULL) AS revokedKeys,
+                EXISTS (SELECT 1 FROM project_seedance_access WHERE project_id = project.id) AS seedanceEnabled
             """
             + PROJECT_SEARCH + " ORDER BY project.created_at DESC, project.id DESC LIMIT ? OFFSET ?",
             (query, query, page_size, (page - 1) * page_size),
         ).fetchall()
-    return {"items": [dict(row) for row in rows], "total": total, "page": page, "pageSize": page_size}
+    return {
+        "items": [{**dict(row), "seedanceEnabled": bool(row["seedanceEnabled"])} for row in rows],
+        "total": total, "page": page, "pageSize": page_size,
+    }
 
 
 @router.post("/projects", status_code=201)
@@ -133,8 +143,24 @@ def create_customer(credentials: accounts.Credentials, request: Request, admin: 
         record_audit(connection, admin, "customer.create", "project", customer.project_id, {"customerId": customer.id})
     return {
         "id": customer.project_id, "customerId": customer.id, "email": customer.email, "createdAt": created_at,
-        "activeKeys": 0, "revokedKeys": 0,
+        "activeKeys": 0, "revokedKeys": 0, "seedanceEnabled": False,
     }
+
+
+@router.put("/projects/{project_id}/model-access")
+def update_project_model_access(
+    project_id: str, payload: ModelAccessChange, request: Request, admin: CurrentAdmin,
+) -> dict:
+    with request.app.state.db.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_project(connection, project_id)
+        previous = model_access.has_seedance_access(connection, project_id)
+        if previous != payload.seedance_enabled:
+            model_access.set_seedance_access(connection, project_id, payload.seedance_enabled)
+            record_audit(connection, admin, "project.model_access.update", "project", project_id, {
+                "before": {"seedanceEnabled": previous}, "after": {"seedanceEnabled": payload.seedance_enabled},
+            })
+    return {"seedanceEnabled": payload.seedance_enabled}
 
 
 @router.get("/projects/{project_id}/keys")

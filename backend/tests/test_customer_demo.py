@@ -12,6 +12,7 @@ from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.customer_demo import DEMO_PROJECT_ID
 from app.main import create_app
+from app.model_access import set_seedance_access
 
 
 MONTH = "2025-02"
@@ -91,6 +92,7 @@ def test_test_project_uses_the_snapshot_through_normal_customer_reads(tmp_path):
         project, session, credentials = _register(client, "test-account")
         other_project, other, _ = _register(client, "ordinary-customer")
         with app.state.db.connect() as connection:
+            set_seedance_access(connection, project, True)
             _seed(connection, project, "vid_live")
             _seed(connection, other_project, "vid_other_live")
             real_statement = statements.confirm_statement(
@@ -106,7 +108,8 @@ def test_test_project_uses_the_snapshot_through_normal_customer_reads(tmp_path):
         login = client.post("/api/customer/login", json=credentials)
         assert login.status_code == 200
         for payload in (login.json(), client.get("/api/customer/me", headers=session).json()):
-            assert set(payload) == {"customer", "csrfToken"}
+            assert set(payload) == {"customer", "csrfToken", "capabilities"}
+            assert payload["capabilities"] == {"seedance": True}
         client.cookies.clear()
 
         default = client.get(USAGE, params={"includeTrend": "true"}, headers=session)

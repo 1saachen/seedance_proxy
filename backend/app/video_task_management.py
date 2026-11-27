@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 import httpx
 
 from . import model_api
+from .accounts import BusinessPrincipal, SeedancePrincipal
 
 
 router = APIRouter(tags=["Video tasks"])
@@ -34,7 +35,7 @@ def initialize(connection: sqlite3.Connection) -> None:
 @router.get(model_api.TASKS_PATH)
 def list_tasks(
     request: Request,
-    principal: model_api.Principal,
+    principal: SeedancePrincipal,
     page_num: PageNumber = 1,
     page_size: PageNumber = 20,
     status: Annotated[TaskStatus | None, Query(alias="filter.status")] = None,
@@ -72,7 +73,7 @@ def list_tasks(
     return {"total": total, "items": [model_api._public_task(row) for row in rows]}
 
 
-def _deletable_task(request: Request, principal: model_api.Principal, task_id: str) -> sqlite3.Row:
+def _deletable_task(request: Request, principal: BusinessPrincipal, task_id: str) -> sqlite3.Row:
     with request.app.state.db.connect() as connection:
         row = connection.execute("""
             SELECT video_tasks.*, video_task_deletions.deleted_at AS deleted_at,
@@ -89,7 +90,7 @@ def _deletable_task(request: Request, principal: model_api.Principal, task_id: s
 @router.delete(model_api.TASKS_PATH + "/{task_id}")
 async def delete_task(
     request: Request,
-    principal: model_api.Principal,
+    principal: SeedancePrincipal,
     task_id: str,
     delete_cancelled: bool = False,
 ) -> dict:
@@ -125,7 +126,7 @@ async def delete_task(
                                (task_id, lease))
 
 
-async def _cancel_queued_task(request: Request, principal: model_api.Principal, task_id: str) -> dict:
+async def _cancel_queued_task(request: Request, principal: BusinessPrincipal, task_id: str) -> dict:
     row = _deletable_task(request, principal, task_id)
     if row["status"] == "canceled":
         return {}

@@ -17,6 +17,7 @@ from app.accounts import initialize as initialize_accounts
 from app.config import Settings
 from app.db import Database
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH
 from app.model_api import initialize as initialize_video_tasks
 from app.statements import BEIJING
@@ -70,6 +71,8 @@ def _customer(client: TestClient, name: str = "alice") -> Customer:
     registered = client.post("/api/customer/register", json={"email": f"{name}@example.com", "password": "Example-only-pass-42"})
     assert registered.status_code == 201, registered.text
     account = registered.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
     created = client.post(
         "/api/customer/keys", headers={"X-CSRF-Token": account["csrfToken"]}, json={"name": "billing test"},
     )

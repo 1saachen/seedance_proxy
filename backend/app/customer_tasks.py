@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from .accounts import CurrentCustomer
+from .accounts import SeedanceCustomer
 
 
 router = APIRouter(prefix="/api/customer", tags=["Customer tasks"])
@@ -24,7 +24,7 @@ TASK_ERRORS = {
 @router.get("/tasks")
 def customer_tasks(
     request: Request,
-    customer: CurrentCustomer,
+    customer: SeedanceCustomer,
     task_id: Annotated[str | None, Query(alias="taskId", pattern=r"^vid_[A-Za-z0-9_-]{1,128}$")] = None,
     from_date: Annotated[str | None, Query(alias="fromDate", pattern=DATE_PATTERN)] = None,
     to_date: Annotated[str | None, Query(alias="toDate", pattern=DATE_PATTERN)] = None,

@@ -159,6 +159,7 @@ def fetch_source(token: str, request: Request) -> FileResponse:
             """
             SELECT u.object_key, u.content_type, u.size_bytes FROM asset_upload_registrations AS r
             JOIN asset_uploads AS u ON u.id = r.upload_id
+            JOIN project_seedance_access AS access ON access.project_id = u.project_id
             WHERE r.fetch_token_hash = ? AND r.fetch_expires_at > ? AND u.bucket = '' AND u.status = 'staged'
             """,
             (_digest(token), int(time.time())),

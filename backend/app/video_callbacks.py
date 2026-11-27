@@ -119,12 +119,13 @@ async def _post_callback(url: str, headers: dict[str, str], body: bytes) -> bool
 def _claim(database: Database, now: int) -> list[sqlite3.Row]:
     with database.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        revoked_tasks = """SELECT callback.task_id FROM video_task_callbacks callback
+        disabled_tasks = """SELECT callback.task_id FROM video_task_callbacks callback
                            JOIN video_tasks task ON task.id = callback.task_id
                            JOIN business_keys account_key ON account_key.id = task.key_id
-                           WHERE account_key.revoked_at IS NOT NULL"""
-        connection.execute(f"DELETE FROM video_callback_events WHERE task_id IN ({revoked_tasks})")
-        connection.execute(f"DELETE FROM video_task_callbacks WHERE task_id IN ({revoked_tasks})")
+                           LEFT JOIN project_seedance_access access ON access.project_id = task.project_id
+                           WHERE account_key.revoked_at IS NOT NULL OR access.project_id IS NULL"""
+        connection.execute(f"DELETE FROM video_callback_events WHERE task_id IN ({disabled_tasks})")
+        connection.execute(f"DELETE FROM video_task_callbacks WHERE task_id IN ({disabled_tasks})")
         claimed = connection.execute("""
             UPDATE video_callback_events SET lease_until = ?
             WHERE sequence IN (

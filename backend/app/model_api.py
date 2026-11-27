@@ -10,11 +10,11 @@ from typing import Annotated, ClassVar, Literal
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from . import billing, key_limits
-from .accounts import BusinessPrincipal, require_business_key
+from . import billing, general_models, key_limits, model_access
+from .accounts import BusinessPrincipal, SeedancePrincipal, require_business_key
 from .asset_presets import is_preset_reference, translate_preset
 from .assets import is_asset_reference, is_public_https, translate_reference
 from .db import Database
@@ -395,15 +395,16 @@ def _submission_error(status: str, task_id: str) -> HTTPException:
 
 
 @router.get("/v1/models")
-def list_models(request: Request, principal: Principal):
-    models = SEEDANCE_MODELS if _ark_key(request.app) else {}
-    return {
-        "object": "list",
-        "data": [
-            {"id": alias, "object": "model", "owned_by": "volcengine", "video": asdict(model.video)}
-            for alias, model in models.items()
-        ],
-    }
+def list_models(request: Request, response: Response, principal: Principal):
+    response.headers["Cache-Control"] = "no-store"
+    if not _ark_key(request.app):
+        return {"object": "list", "data": []}
+    models = general_models.list_public_models()
+    with request.app.state.db.connect() as connection:
+        if model_access.has_seedance_access(connection, principal.project_id):
+            models.extend({"id": alias, "object": "model", "owned_by": "volcengine", "type": "video",
+                           "video": asdict(model.video)} for alias, model in SEEDANCE_MODELS.items())
+    return {"object": "list", "data": models}
 
 
 def _previous_submission(
@@ -418,7 +419,7 @@ def _previous_submission(
 @router.post(TASKS_PATH)
 async def create_task(
     request: Request,
-    principal: Principal,
+    principal: SeedancePrincipal,
     payload: VideoRequest,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
@@ -455,6 +456,7 @@ async def create_task(
         await asyncio.to_thread(validate_inline_media, clean["content"])
     with request.app.state.db.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
+        model_access.require_project_access(connection, principal.project_id)
         if idempotency_hash is not None:
             existing = _previous_submission(connection, principal, idempotency_hash)
             if existing is not None:
@@ -694,7 +696,7 @@ async def poll_unfinished(app: FastAPI) -> int:
 
 
 @router.get(TASKS_PATH + "/{task_id}")
-async def get_task(request: Request, principal: Principal, task_id: str):
+async def get_task(request: Request, principal: SeedancePrincipal, task_id: str):
     row = _task(request, principal, task_id)
     if row["status"] not in ACTIVE_STATES:
         return _public_task(row)

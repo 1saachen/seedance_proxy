@@ -14,8 +14,8 @@ function AuthFrame({ children }) {
       <main className="auth-main">
         {children}
         <aside className="auth-access" aria-labelledby="auth-access-title">
-          <h2 id="auth-access-title">接入 Seedance API</h2>
-          <p>登录后，在自己的项目里创建 API Key、测试视频生成和查看用量。</p>
+          <h2 id="auth-access-title">接入火山方舟模型</h2>
+          <p>登录后，在自己的项目里创建 API Key、体验文本和图片生成并查看用量。</p>
           <div className="auth-endpoint">
             <span>模型发现</span>
             <code><span>GET</span> /v1/models</code>
@@ -123,6 +123,29 @@ function App() {
     setNotice(expired ? '会话已过期，请重新登录。' : '你已退出登录。');
     setSession(null);
   }, []);
+
+  const signedIn = Boolean(session);
+  useEffect(() => {
+    if (!signedIn) return;
+    let refresh;
+    function refreshSession() {
+      refresh?.abort();
+      const controller = new AbortController();
+      refresh = controller;
+      customerApi.me(controller.signal).then((current) => {
+        if (!controller.signal.aborted) {
+          setSession((previous) => previous?.customer.id === current.customer.id ? current : previous);
+        }
+      }, (problem) => {
+        if (!controller.signal.aborted && problem.status === 401) onSessionEnded(true);
+      });
+    }
+    window.addEventListener('focus', refreshSession);
+    return () => {
+      refresh?.abort();
+      window.removeEventListener('focus', refreshSession);
+    };
+  }, [signedIn, onSessionEnded]);
 
   if (connectionError) {
     return (

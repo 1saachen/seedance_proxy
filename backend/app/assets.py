@@ -11,11 +11,11 @@ from uuid import uuid4
 from weakref import WeakValueDictionary
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from . import upload_registration
-from .accounts import BusinessPrincipal, require_business_key
+from .accounts import BusinessPrincipal, SeedancePrincipal as Principal
 from .urls import is_public_https
 
 
@@ -35,7 +35,6 @@ Action = Literal[
 CREATE_ACTIONS = {"CreateAssetGroup", "CreateAsset", "CreateVisualValidateSession"}
 READ_ACTIONS = {"GetAssetGroup", "GetAsset", "GetVisualValidateResult"}
 DELETE_ACTIONS = {"DeleteAssetGroup", "DeleteAsset"}
-Principal = Annotated[BusinessPrincipal, Depends(require_business_key)]
 PageNumber = Annotated[int, Query(alias="pageNumber", ge=1, le=1_000_000)]
 PageSize = Annotated[int, Query(alias="pageSize", ge=1, le=100)]
 GroupId = Annotated[str, Field(min_length=1, max_length=128)]

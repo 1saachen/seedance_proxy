@@ -1,25 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { customerApi, requestErrorMessage } from './api.js';
-import { Playground } from './playground.jsx';
+import { ModelPlayground } from './model-playground.jsx';
 import { SpendTrend } from './spend-trend.jsx';
-import { TaskRecords } from './task-records.jsx';
 import { formatDate, formatNumber, Status } from './workbench-format.jsx';
 import { Wordmark } from './wordmark.jsx';
+
+const Playground = lazy(() => import('./playground.jsx').then(({ Playground }) => ({ default: Playground })));
+const TaskRecords = lazy(() => import('./task-records.jsx').then(({ TaskRecords }) => ({ default: TaskRecords })));
 
 const navigation = [
   {
     label: '使用',
     items: [
       { id: 'overview', label: '概览', mark: '◫', description: '查看当前项目的接入状态和本月用量。' },
-      { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入 Seedance 视频生成。' },
-      { id: 'playground', label: '视频体验', mark: '▷', description: '运行一次 Seedance 生成并查看当前结果。' },
+      { id: 'api', label: 'API 接入', mark: '⌘', description: '管理业务 API Key，接入火山方舟模型。' },
+      { id: 'models', label: '模型体验', mark: '◇', description: '使用项目 API Key 体验文本回复和图片生成。' },
+      { id: 'playground', label: '视频体验', mark: '▷', description: '提交视频生成请求并查看结果。', seedanceOnly: true },
     ],
   },
   {
     label: '记录',
     items: [
-      { id: 'tasks', label: '任务记录', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的生成记录。' },
-      { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和任务用量。' },
+      { id: 'tasks', label: '视频任务', mark: '▤', description: '按任务 ID、提交时间和状态查询本项目的视频记录。', seedanceOnly: true },
+      { id: 'billing', label: '用量与账单', mark: '≋', description: '查看当前项目的月度账单和调用用量。' },
     ],
   },
 ];
@@ -140,8 +143,8 @@ function Overview({ customer, keys, month, onExpired }) {
         <section className="panel" aria-labelledby="overview-heading">
           <div className="panel-head">
             <div>
-              <h2 id="overview-heading">开始接入 Seedance</h2>
-              <p>从创建密钥到查询第一个视频任务。</p>
+              <h2 id="overview-heading">开始接入模型</h2>
+              <p>创建密钥后，在工作台体验或从应用发起 API 请求。</p>
             </div>
           </div>
           <ol className="onboarding-steps" role="list">
@@ -150,12 +153,12 @@ function Overview({ customer, keys, month, onExpired }) {
               <a className="button primary" href="#api">管理密钥</a>
             </li>
             <li>
-              <div><h3>提交生成任务</h3><p>选择 Seedance 模型，输入提示词并生成视频。</p></div>
-              <a className="button secondary" href="#playground">进入视频体验</a>
+              <div><h3>体验文本和图片</h3><p>选择模型，输入提示词并生成文本或图片。</p></div>
+              <a className="button secondary" href="#models">进入模型体验</a>
             </li>
             <li>
-              <div><h3>查询生成结果</h3><p>查看任务状态、失败原因和输出 Token。</p></div>
-              <a className="button secondary" href="#tasks">查看任务</a>
+              <div><h3>查询调用用量</h3><p>按月查看项目的调用记录和计量数据。</p></div>
+              <a className="button secondary" href="#billing">查看用量</a>
             </li>
           </ol>
         </section>
@@ -305,7 +308,7 @@ function KeyPanel({ state, csrfToken, onExpired }) {
           <input
             id="key-name"
             name="name"
-            placeholder="例如：视频生成服务"
+            placeholder="例如：内容生成服务"
             maxLength={100}
             required
             disabled={busy || Boolean(secret)}
@@ -393,83 +396,38 @@ function KeyPanel({ state, csrfToken, onExpired }) {
 }
 
 function SetupGuide() {
-  const origin = window.location.origin;
   const example = [
-    `BASE_URL='${origin}'`,
+    "BASE_URL='" + window.location.origin + "'",
     'curl "$BASE_URL/v1/models" -H "Authorization: Bearer $API_KEY"',
     '',
-    'curl "$BASE_URL/api/v3/contents/generations/tasks" \\',
+    'curl "$BASE_URL/v1/chat/completions" \\',
+    '  -H "Authorization: Bearer $API_KEY" \\',
+    "  -H 'Content-Type: application/json' \\",
+    "  -d '{\"model\":\"doubao-seed-2.1-lite\",\"messages\":[{\"role\":\"user\",\"content\":\"写一句海滨旅行推荐\"}]}'",
+    '',
+    'curl "$BASE_URL/v1/images/generations" \\',
     '  -H "Authorization: Bearer $API_KEY" \\',
     "  -H 'Content-Type: application/json' \\",
     '  -H "Idempotency-Key: $REQUEST_ID" \\',
-    `  -d '{"model":"doubao-seedance-2.0","content":[{"type":"text","text":"雨后的海滨街道"}],"duration":5}'`,
-    '',
-    'curl "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \\',
-    '  -H "Authorization: Bearer $API_KEY"',
-  ].join('\n');
-  const uploadExample = [
-    'curl "$BASE_URL/api/asset-group/create" \\',
-    '  -H "Authorization: Bearer $API_KEY" \\',
-    "  -H 'Content-Type: application/json' -d '{\"name\":\"reference-demo\"}'",
-    '',
-    'curl "$BASE_URL/api/asset/upload-file" \\',
-    '  -H "Authorization: Bearer $API_KEY" \\',
-    '  -H "Idempotency-Key: $UPLOAD_REQUEST_ID" \\',
-    '  -F "file=@./reference.png;type=image/png" -F "assetType=Image"',
-    '',
-    'curl "$BASE_URL/api/asset/create" \\',
-    '  -H "Authorization: Bearer $API_KEY" \\',
-    "  -H 'Content-Type: application/json' \\",
-    '  -d "{\\"groupId\\":\\"$GROUP_ID\\",\\"uploadId\\":\\"$UPLOAD_ID\\",\\"name\\":\\"reference\\",\\"assetType\\":\\"Image\\"}"',
-    '',
-    'curl "$BASE_URL/api/asset/get?assetId=$ASSET_ID" \\',
-    '  -H "Authorization: Bearer $API_KEY"',
+    "  -d '{\"model\":\"doubao-seedream-5.5\",\"prompt\":\"雨后海滨小镇的红色电车\"}'",
   ].join('\n');
   return (
     <section className="panel" aria-labelledby="integration-heading">
       <div className="panel-head">
         <div>
-          <h2 id="integration-heading">Seedance 快速接入</h2>
-          <p>
-            用 API 地址和项目业务 Key，从终端、API 客户端或应用发起请求。
-          </p>
+          <h2 id="integration-heading">模型 API 快速接入</h2>
+          <p>用 API 地址和项目业务 Key，从终端、API 客户端或应用发起请求。</p>
         </div>
         <a href="/docs/#quickstart">开发者文档</a>
       </div>
       <p className="guide-note">
-        发送请求时使用 <code>Authorization: Bearer &lt;API_KEY&gt;</code>。下方是 Bash 示例。请先在运行命令的终端设置
-        <code>API_KEY</code> 和 <code>REQUEST_ID</code>，并先用 <code>GET /v1/models</code> 查看可用模型。
+        发送请求时使用 <code>Authorization: Bearer &lt;API_KEY&gt;</code>。运行下列 Bash 命令前，
+        先在终端设置 <code>API_KEY</code> 和 <code>REQUEST_ID</code>。
       </p>
-      <pre className="console-code" tabIndex={0}>
-        <code>{example}</code>
-      </pre>
+      <pre className="console-code" tabIndex={0}><code>{example}</code></pre>
       <p className="guide-note">
-        每次新任务设置不同的 <code>REQUEST_ID</code>，重试沿用原值和原请求体。用创建响应里的任务 ID 设置 <code>TASK_ID</code>。
+        每次新建图片请求时设置不同的 <code>REQUEST_ID</code>，重试沿用原值和原请求体。
       </p>
-      <section className="guide-subsection" aria-labelledby="asset-guide-heading">
-        <h3 id="asset-guide-heading">用本地图片作为参考</h3>
-        <p className="guide-note">
-          用同一枚业务 Key 逐条运行命令。将创建素材组返回的 <code>group.id</code> 设为 <code>GROUP_ID</code>，
-          并为新文件设置独立的 <code>UPLOAD_REQUEST_ID</code>。
-        </p>
-        <p className="guide-note">
-          用上传返回的 <code>uploadId</code> 设置 <code>UPLOAD_ID</code>，再用登记返回的 <code>asset.id</code>{' '}
-          设置 <code>ASSET_ID</code>。
-        </p>
-        <pre className="console-code" tabIndex={0}>
-          <code>{uploadExample}</code>
-        </pre>
-        <p className="guide-note">
-          状态为 <code>Processing</code> 时稍后重查。变为 <code>Active</code> 后，将返回的 <code>asset.reference</code>{' '}
-          填入下面的 <code>url</code>，把该对象加到生成请求的 <code>content</code> 中。
-        </p>
-        <pre className="console-code" tabIndex={0}>
-          <code>{'{"type":"image_url","image_url":{"url":"asset://<素材 ID>"},"role":"reference_image"}'}</code>
-        </pre>
-        <p className="guide-note">
-          如果素材已有公网 HTTPS 链接，可在登记请求中填写 <code>url</code> 并省略 <code>uploadId</code>。
-        </p>
-      </section>
     </section>
   );
 }
@@ -699,6 +657,55 @@ function UsageDetails({ month, day, onClearDay, onExpired }) {
   );
 }
 
+const modelCallStatus = {
+  in_progress: '进行中',
+  succeeded: '已完成',
+  failed: '失败',
+  uncertain: '待确认',
+};
+
+function ModelUsage({ month, onExpired }) {
+  const load = useCallback((signal) => customerApi.modelUsage(month, signal), [month]);
+  const usage = useRemote(load, onExpired);
+  return (
+    <section className="panel" aria-labelledby="model-usage-heading">
+      <div className="panel-head">
+        <div><h2 id="model-usage-heading">文本与图片用量 · {month}</h2><p>查看成功调用汇总和最近 100 条请求记录。</p></div>
+      </div>
+      <LoadState state={usage}>
+        {({ summary, items }) => (
+          <>
+            <dl className="metric-strip model-usage-metrics">
+              <div><dt>成功文本调用</dt><dd>{formatNumber(summary.textCalls)}</dd></div>
+              <div><dt>成功图片调用</dt><dd>{formatNumber(summary.imageCalls)}</dd></div>
+              <div><dt>输入 Token</dt><dd>{formatNumber(summary.promptTokens)}</dd></div>
+              <div><dt>输出 Token</dt><dd>{formatNumber(summary.completionTokens)}</dd></div>
+              <div><dt>生成图片</dt><dd>{formatNumber(summary.generatedImages)}</dd></div>
+            </dl>
+            {items.length ? (
+              <div className="table-scroll" tabIndex={0} role="region" aria-label="文本与图片用量明细">
+                <table>
+                  <thead><tr><th scope="col">模型</th><th scope="col">状态</th><th scope="col">输入 Token</th><th scope="col">输出 Token</th><th scope="col">图片</th><th scope="col">时间</th></tr></thead>
+                  <tbody>{items.map((item) => (
+                    <tr key={item.id}>
+                      <th scope="row"><code>{item.model}</code></th>
+                      <td>{modelCallStatus[item.status] ?? '—'}</td>
+                      <td>{formatNumber(item.promptTokens)}</td>
+                      <td>{formatNumber(item.completionTokens)}</td>
+                      <td>{formatNumber(item.generatedImages)}</td>
+                      <td>{formatDate(item.createdAt)}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            ) : <p className="empty">这个月还没有文本或图片调用。</p>}
+          </>
+        )}
+      </LoadState>
+    </section>
+  );
+}
+
 function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
   const statement = (
     <section className="panel" aria-labelledby="billing-heading" key="statement">
@@ -732,23 +739,30 @@ function Billing({ month, setMonth, maxMonth, day, onClearDay, onExpired }) {
       onExpired={onExpired}
     />
   );
-  return day ? [usage, statement] : [statement, usage];
+  const modelUsage = <ModelUsage month={month} onExpired={onExpired} key="models" />;
+  return day ? [usage, statement, modelUsage] : [statement, modelUsage, usage];
 }
 
 export function Workspace({ session, onSessionEnded }) {
-  const [{ section, day }, setRoute] = useState(readRoute);
+  const [route, setRoute] = useState(readRoute);
   const [videoKey, setVideoKey] = useState('');
   const [month, setMonth] = useState(currentMonth);
   const [loggingOut, setLoggingOut] = useState(false);
   const [error, setError] = useState('');
   const maxMonth = currentMonth();
   const keys = useRemote(customerApi.keys, onSessionEnded);
+  const seedanceEnabled = session.capabilities?.seedance === true;
+  const { section, day } = route.section.seedanceOnly && !seedanceEnabled ? { section: sections[0], day: null } : route;
 
   useEffect(() => {
     const onHashChange = () => setRoute(readRoute());
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  useEffect(() => {
+    if (!seedanceEnabled) setVideoKey('');
+  }, [seedanceEnabled]);
 
   function clearBillingDay() {
     if (!day) return;
@@ -804,7 +818,7 @@ export function Workspace({ session, onSessionEnded }) {
           {navigation.map(({ label, items }) => (
             <div key={label} className="workspace-nav-group">
               <p>{label}</p>
-              {items.map((item) => (
+              {items.filter((item) => seedanceEnabled || !item.seedanceOnly).map((item) => (
                 <a key={item.id} href={`#${item.id}`} aria-current={section.id === item.id ? 'page' : undefined}>
                   <span className="nav-mark" aria-hidden="true">{item.mark}</span>
                   {item.label}
@@ -816,6 +830,7 @@ export function Workspace({ session, onSessionEnded }) {
             <span className="nav-mark" aria-hidden="true">↗</span>
             开发者文档
           </a>
+          {seedanceEnabled && <a className="sidebar-docs" href="/api/customer/docs/video">视频开发文档</a>}
         </nav>
       </aside>
       <main id="workspace-content" className="workspace-main" tabIndex={-1}>
@@ -835,17 +850,22 @@ export function Workspace({ session, onSessionEnded }) {
             <SetupGuide />
           </>
         )}
-        <div hidden={section.id !== 'playground'}>
-          <Playground
-            active={section.id === 'playground'}
-            csrfToken={session.csrfToken}
-            onExpired={onSessionEnded}
-            videoKey={videoKey}
-            setVideoKey={setVideoKey}
-            onKeysChanged={keys.refresh}
-          />
-        </div>
-        {section.id === 'tasks' && <TaskRecords videoKey={videoKey} onExpired={onSessionEnded} />}
+        {section.id === 'models' && <ModelPlayground onExpired={onSessionEnded} />}
+        {seedanceEnabled && (
+          <Suspense fallback={section.seedanceOnly ? <p role="status">正在加载…</p> : null}>
+            <div hidden={section.id !== 'playground'}>
+              <Playground
+                active={section.id === 'playground'}
+                csrfToken={session.csrfToken}
+                onExpired={onSessionEnded}
+                videoKey={videoKey}
+                setVideoKey={setVideoKey}
+                onKeysChanged={keys.refresh}
+              />
+            </div>
+            {section.id === 'tasks' && <TaskRecords videoKey={videoKey} onExpired={onSessionEnded} />}
+          </Suspense>
+        )}
         {section.id === 'billing' && (
           <Billing month={month} setMonth={changeBillingMonth} maxMonth={maxMonth} day={day} onClearDay={clearBillingDay} onExpired={onSessionEnded} />
         )}

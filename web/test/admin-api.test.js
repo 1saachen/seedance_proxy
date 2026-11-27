@@ -59,6 +59,19 @@ test('admin Key limit updates send both limits to the scoped path with CSRF', as
   assert.deepEqual(JSON.parse(options.body), { concurrencyLimit: null, rpmLimit: 45 });
 });
 
+test('administrator grants and revokes Seedance through the project entitlement endpoint', async (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async (_path, options) => Response.json(JSON.parse(options.body)));
+  for (const enabled of [true, false]) {
+    assert.deepEqual(await adminApi.updateModelAccess('p/fixture', enabled, 'fixture-csrf'), { seedanceEnabled: enabled });
+  }
+  for (const { arguments: [path, options] } of fetch.mock.calls) {
+    assert.equal(path, '/api/admin/projects/p%2Ffixture/model-access');
+    assert.equal(options.method, 'PUT');
+    assert.equal(options.headers['X-CSRF-Token'], 'fixture-csrf');
+    assert.equal(options.credentials, 'same-origin');
+  }
+});
+
 test('official price import previews the Beijing time and applies its server token with CSRF', async (t) => {
   const preview = { effectiveAt: '2026-11-28T16:00:00Z', previewToken: 'fixture-preview-token' };
   const applied = { createdCount: 28, skippedCount: 0 };

@@ -9,7 +9,8 @@ import httpx
 
 from . import (
     accounts, admin_auth, admin_operations, asset_liveness, asset_presets, assets, billing, customer_billing,
-    customer_tasks, key_limits, model_api, provider_costs, statements, upload_registration, uploads, usage,
+    customer_tasks, developer_docs, general_models, key_limits, model_access, model_api, provider_costs, statements,
+    upload_registration, uploads, usage,
     video_callbacks, video_task_management,
 )
 from .config import Settings
@@ -68,9 +69,11 @@ def create_app(
         with database.connect() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
             accounts.initialize(connection)
+            model_access.initialize(connection)
             admin_auth.init_schema(connection)
             assets.initialize(connection)
             model_api.initialize(connection)
+            general_models.initialize(connection)
             key_limits.initialize(connection)
             video_task_management.initialize(connection)
             video_callbacks.initialize(connection)
@@ -113,7 +116,7 @@ def create_app(
                     with suppress(asyncio.CancelledError):
                         await task
 
-    app = FastAPI(title="richproxy", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Richi 火山模型", version="0.1.0", openapi_url=None, lifespan=lifespan)
     upload_registration.redact_source_access_log()
     logging.getLogger("uvicorn.access").addFilter(_admin_access_filter)
     app.state.settings = settings
@@ -129,9 +132,9 @@ def create_app(
     @app.middleware("http")
     async def protect_api_response(request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/api/admin/", "/api/customer/", "/api/v3/", "/api/asset/", "/api/asset-group/")):
+        if request.url.path.startswith(("/api/admin/", "/api/customer/", "/api/v3/", "/api/asset/", "/api/asset-group/", "/v1/")):
             response.headers["Cache-Control"] = "no-store"
-        if request.url.path.startswith("/api/admin/"):
+        if request.url.path.startswith(("/api/admin/", "/api/customer/docs/")):
             response.headers["X-Robots-Tag"] = "noindex, nofollow"
         return response
 
@@ -148,6 +151,8 @@ def create_app(
     app.include_router(uploads.router)
     app.include_router(upload_registration.router)
     app.include_router(model_api.router)
+    app.include_router(general_models.router)
+    app.include_router(developer_docs.router)
     app.include_router(video_task_management.router)
     app.include_router(usage.router)
     app.include_router(customer_tasks.router)

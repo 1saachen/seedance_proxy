@@ -7,7 +7,7 @@ from fastapi import HTTPException, Request
 from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 
-from .accounts import authenticate_business_key, business_bearer
+from .accounts import authenticate_seedance_business_key, business_bearer
 from .media import IMAGE_FORMATS, MAX_DECODED_IMAGE_PIXELS, MAX_IMAGE_PIXELS, MIB, SIZE_LIMITS, inspect_media
 
 
@@ -44,7 +44,7 @@ class VideoBodyLimit(APIRoute):
                 # Authenticate before reading a potentially large Base64 body. The route dependency
                 # handles rate admission and checks for revocations after parsing.
                 credentials = await business_bearer(request)
-                await run_in_threadpool(authenticate_business_key, request, credentials)
+                await run_in_threadpool(authenticate_seedance_business_key, request, credentials)
             return await handler(_BoundedRequest(request.scope, request.receive))
 
         return bounded_handler

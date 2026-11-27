@@ -9,6 +9,7 @@ import httpx
 from app import key_limits
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH
 
 
@@ -38,6 +39,8 @@ def _customer(client):
     })
     assert response.status_code == 201
     data = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, data["customer"]["projectId"], True)
     return data["customer"]["projectId"], {"X-CSRF-Token": data["csrfToken"]}
 
 

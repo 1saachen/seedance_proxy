@@ -14,6 +14,7 @@ from pydantic import SecretStr
 from app.assets import ARK_ASSET_HOST, translate_reference
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 
 
 ASSET_GROUP_CREATE = "/api/asset-group/create"
@@ -52,6 +53,8 @@ def _project(client: TestClient, email: str) -> tuple[dict, str]:
     signup = client.post("/api/customer/register", json={"email": email, "password": "example-password-123"})
     assert signup.status_code == 201
     account = signup.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
     key = client.post("/api/customer/keys", json={"name": "test"}, headers={"X-CSRF-Token": account["csrfToken"]})
     assert key.status_code == 201
     return {"Authorization": f"Bearer {key.json()['secret']}"}, account["customer"]["projectId"]

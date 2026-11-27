@@ -39,6 +39,9 @@ export const adminApi = {
   logout: (csrfToken) => request('/logout', { method: 'POST', csrfToken }),
   projects: (q, page, signal) => query('/projects', { q, page, pageSize: 15 }, signal),
   createProject: (body, csrfToken) => request('/projects', { method: 'POST', body, csrfToken }),
+  updateModelAccess: (id, seedanceEnabled, csrfToken) => request(projectPath(id) + '/model-access', {
+    method: 'PUT', body: { seedanceEnabled }, csrfToken,
+  }),
   keys: (id, signal) => request(projectPath(id) + '/keys', { signal }),
   updateKeyLimits: (projectId, keyId, body, csrfToken) =>
     request(projectPath(projectId) + '/keys/' + encodeURIComponent(keyId) + '/limits', {

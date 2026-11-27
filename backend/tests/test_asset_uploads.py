@@ -19,6 +19,7 @@ from PIL import Image
 
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.upload_registration import redact_source_access_log
 from app.upload_storage import LocalUploadStorage, StorageError
 from app.uploads import cleanup_uploads
@@ -123,7 +124,10 @@ def _client(
 def _register(client: TestClient, email: str) -> dict:
     response = client.post("/api/customer/register", json={"email": email, "password": "example-password-123"})
     assert response.status_code == 201
-    return response.json()
+    account = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
+    return account
 
 
 def _key(client: TestClient, account: dict, name: str) -> tuple[dict[str, str], str]:
@@ -603,6 +607,14 @@ def test_registering_local_upload_scopes_owner_and_serves_expiring_ark_source(tm
         assert byte_range.status_code == 206 and byte_range.content == png[2:6]
         assert byte_range.headers["Content-Range"] == f"bytes 2-5/{len(png)}"
         assert client.get(source.removesuffix(".png") + ".jpg").status_code == 404
+
+        with client.app.state.db.connect() as connection:
+            set_seedance_access(connection, alice["customer"]["projectId"], False)
+        assert client.get(source).status_code == 404
+        assert client.head(source).status_code == 404
+        _assert_error(client.get(f"{UPLOAD}/{upload_id}", headers=auth), 403, "seedance_access_required")
+        with client.app.state.db.connect() as connection:
+            set_seedance_access(connection, alice["customer"]["projectId"], True)
 
         with client.app.state.db.connect() as connection:
             connection.execute("UPDATE asset_upload_registrations SET fetch_expires_at = 0 WHERE upload_id = ?", (upload_id,))

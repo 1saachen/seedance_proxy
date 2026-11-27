@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 
 
 def _app(path):
@@ -24,6 +25,8 @@ def _owner(client, email):
     })
     assert response.status_code == 201
     account = response.json()
+    with client.app.state.db.connect() as connection:
+        set_seedance_access(connection, account["customer"]["projectId"], True)
     key = client.post(
         "/api/customer/keys",
         headers={"X-CSRF-Token": account["csrfToken"]},

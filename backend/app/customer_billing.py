@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from . import statements
 from .accounts import CustomerPrincipal, require_customer
 from .customer_demo import customer_read_scope, usage_unavailable
+from .model_access import visible_video_history
 
 
 router = APIRouter(prefix="/api/customer/billing", tags=["Customer billing"])
@@ -39,7 +40,7 @@ def billing_month(
                     connection, customer.project_id, month, page=page, page_size=page_size,
                 )
             if confirmed is not None:
-                return confirmed
+                return visible_video_history(request, customer.project_id, confirmed)
         with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
             if month is None:
                 today = snapshot_date or datetime.now(statements.BEIJING).date()
@@ -50,7 +51,7 @@ def billing_month(
                 raise usage_unavailable()
     except statements.StatementError as error:
         raise _http_error(error) from None
-    return statement
+    return visible_video_history(request, customer.project_id, statement)
 
 
 @router.get("/{statement_id}")
@@ -60,11 +61,12 @@ def billing_statement(
     try:
         with request.app.state.db.connect() as connection:
             connection.execute("BEGIN")
-            return statements.confirmed_statement(
+            statement = statements.confirmed_statement(
                 connection, customer.project_id, statement_id, page=page, page_size=page_size,
             )
     except statements.StatementError as error:
         raise _http_error(error) from None
+    return visible_video_history(request, customer.project_id, statement)
 
 
 def _csv_cell(value: str | int | None) -> str | int | None:
@@ -81,6 +83,7 @@ def export_statement(statement_id: str, request: Request, customer: Customer) ->
             statement = statements.confirmed_export(connection, customer.project_id, statement_id)
     except statements.StatementError as error:
         raise _http_error(error) from None
+    statement = visible_video_history(request, customer.project_id, statement)
 
     body = StringIO(newline="")
     body.write("\ufeff")

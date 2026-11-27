@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field, SecretStr
 
-from . import key_limits
+from . import key_limits, model_access
 
 
 SESSION_COOKIE = "seedance_customer_session"
@@ -189,10 +189,13 @@ def _new_session(connection: sqlite3.Connection, customer_id: str, previous: str
     return token
 
 
-def _customer_payload(customer: CustomerPrincipal, token: str) -> dict:
+def _customer_payload(request: Request, customer: CustomerPrincipal, token: str) -> dict:
+    with request.app.state.db.connect() as connection:
+        seedance_enabled = model_access.has_seedance_access(connection, customer.project_id)
     return {
         "customer": {"id": customer.id, "email": customer.email, "projectId": customer.project_id},
         "csrfToken": _csrf_token(token),
+        "capabilities": {"seedance": seedance_enabled},
     }
 
 
@@ -201,7 +204,7 @@ def _session_response(request: Request, response: Response, customer: CustomerPr
         SESSION_COOKIE, token, max_age=SESSION_SECONDS, path=SESSION_PATH,
         secure=request.app.state.settings.cookie_secure, httponly=True, samesite="strict",
     )
-    return _customer_payload(customer, token)
+    return _customer_payload(request, customer, token)
 
 
 def require_customer(request: Request) -> CustomerPrincipal:
@@ -251,11 +254,7 @@ def authenticate_business_key(
     return principal
 
 
-def require_business_key(
-    request: Request,
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
-) -> BusinessPrincipal:
-    principal = authenticate_business_key(request, credentials)
+def _admit_business_key(request: Request, principal: BusinessPrincipal, *, seedance: bool = False) -> BusinessPrincipal:
     with request.app.state.db.connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
         active = connection.execute(
@@ -263,13 +262,49 @@ def require_business_key(
         ).fetchone()
         if active is None:
             raise _invalid_business_key()
+        if seedance:
+            model_access.require_project_access(connection, principal.project_id)
         retry_after = key_limits.admit_request(connection, principal.key_id)
     if retry_after is not None:
         raise _error(429, "key_rpm_exceeded", "API Key reached its request limit", {"Retry-After": str(retry_after)})
     return principal
 
 
+def require_business_key(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
+) -> BusinessPrincipal:
+    return _admit_business_key(request, authenticate_business_key(request, credentials))
+
+
+def require_seedance_business_key(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(business_bearer)],
+) -> BusinessPrincipal:
+    return _admit_business_key(request, authenticate_business_key(request, credentials), seedance=True)
+
+
+def authenticate_seedance_business_key(
+    request: Request, credentials: HTTPAuthorizationCredentials | None,
+) -> BusinessPrincipal:
+    """Reject unauthorized large video requests before FastAPI parses their bodies."""
+    principal = authenticate_business_key(request, credentials)
+    with request.app.state.db.connect() as connection:
+        model_access.require_project_access(connection, principal.project_id)
+    return principal
+
+
 CurrentCustomer = Annotated[CustomerPrincipal, Depends(require_customer)]
+SeedancePrincipal = Annotated[BusinessPrincipal, Depends(require_seedance_business_key)]
+
+
+def require_seedance_customer(request: Request, customer: CurrentCustomer) -> CustomerPrincipal:
+    with request.app.state.db.connect() as connection:
+        model_access.require_project_access(connection, customer.project_id)
+    return customer
+
+
+SeedanceCustomer = Annotated[CustomerPrincipal, Depends(require_seedance_customer)]
 
 
 @router.get("/playground/key", status_code=204)
@@ -336,7 +371,7 @@ def login(credentials: Credentials, request: Request, response: Response) -> dic
 
 @router.get("/me")
 def current_customer(request: Request, customer: CurrentCustomer) -> dict:
-    return _customer_payload(customer, _session_token(request))
+    return _customer_payload(request, customer, _session_token(request))
 
 
 @router.post("/logout", status_code=204)

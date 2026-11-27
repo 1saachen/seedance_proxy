@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .accounts import CustomerPrincipal, require_customer
 from .customer_demo import customer_read_scope
+from .model_access import visible_video_history
 
 
 router = APIRouter(prefix="/api/customer", tags=["Customer usage"])
@@ -160,7 +161,8 @@ def customer_usage(
 ):
     with customer_read_scope(request, customer.project_id) as (connection, project_id, snapshot_date):
         connection.execute("BEGIN")
-        return project_usage(
+        history = project_usage(
             connection, project_id, today=snapshot_date or datetime.now(SHANGHAI).date(),
             month=month, day=day, page=page, page_size=page_size, include_trend=include_trend,
         )
+    return visible_video_history(request, customer.project_id, history)

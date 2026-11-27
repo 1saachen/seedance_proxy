@@ -337,13 +337,6 @@
   overflow-wrap: anywhere;
 }
 
-.model-4k {
-  padding: 0.06rem 0.24rem;
-  border-radius: 0.23rem;
-  background: #e9f5f2;
-  color: #006e62;
-}
-
 .landing-steps {
   display: grid;
   gap: 1.3rem;

@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
 const backendOrigin = process.env.SEEDANCE_BACKEND_ORIGIN || 'http://127.0.0.1:8000';
-const proxy = { '/api': backendOrigin, '/v1': backendOrigin };
+const proxy = { '/api': backendOrigin, '/v1': backendOrigin, '/openapi.json': backendOrigin };
 
 function searchMetadata() {
   const configuredOrigin = process.env.SEEDANCE_SITE_ORIGIN;
@@ -17,7 +17,7 @@ function searchMetadata() {
     ['/docs/', '/docs/'], ['/docs/index.html', '/docs/'],
   ]);
   return {
-    name: 'seedance-search-metadata',
+    name: 'richi-search-metadata',
     transformIndexHtml(_html, context) {
       const route = publicRoutes.get(context.path);
       if (!route) return [];

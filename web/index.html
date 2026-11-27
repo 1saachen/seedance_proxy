@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>火山引擎 Seedance 视频生成 API | richproxy</title>
-    <meta name="description" content="从 richproxy 接入火山引擎 Seedance。查看视频模型规格与 API 请求示例，在项目工作台管理业务 Key、任务和用量。" />
+    <title>火山方舟文本与图片 API | Richi 火山模型</title>
+    <meta name="description" content="通过 Richi 火山模型接入火山方舟的豆包 Seed 文本模型与 Seedream 图片模型，在项目工作台管理密钥和调用记录。" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="zh_CN" />
-    <meta property="og:site_name" content="richproxy" />
-    <meta property="og:title" content="火山引擎 Seedance 视频生成 API | richproxy" />
-    <meta property="og:description" content="查看 Seedance 模型规格、接口示例与任务查询方式。" />
+    <meta property="og:site_name" content="Richi 火山模型" />
+    <meta property="og:title" content="火山方舟文本与图片 API | Richi 火山模型" />
+    <meta property="og:description" content="查看文本与图片模型、API 接入方式和请求示例。" />
     <meta name="theme-color" content="#f7f9fd" />
     <link rel="stylesheet" href="/src/styles.css" />
     <link rel="stylesheet" href="/src/landing.css" />
@@ -19,11 +19,11 @@
     <a class="skip-link" href="#main">跳到正文</a>
     <header class="landing-header">
       <div class="page-width landing-header-inner">
-        <a class="wordmark" href="/" aria-label="richproxy 首页">
-          <span class="brand-mark" aria-hidden="true">R</span><span>richproxy</span>
+        <a class="wordmark" href="/" aria-label="Richi 火山模型首页">
+          <span class="brand-mark" aria-hidden="true">R</span><span>Richi 火山模型</span>
         </a>
         <nav class="landing-nav" aria-label="主导航">
-          <a href="#models">模型规格</a>
+          <a href="#models">支持的模型</a>
           <a href="/docs/">开发文档</a>
           <a class="button secondary" href="/console/">登录</a>
         </nav>
@@ -32,37 +32,36 @@
     <main class="page-width" id="main">
       <section class="landing-hero" aria-labelledby="hero-title">
         <div class="landing-intro">
-          <h1 id="hero-title">Rich Proxy ·<br /> Seedance API 平台</h1>
-          <p>在应用里提交视频生成任务、查询进度并获取结果。在 richproxy 工作台管理项目密钥和调用用量。</p>
+          <h1 id="hero-title">火山方舟<br />文本与图片 API</h1>
+          <p>把豆包 Seed 对话和 Seedream 图像生成接入你的应用。使用项目 API Key 调用，在工作台查看用量。</p>
           <div class="hero-actions">
             <a class="button primary" href="/console/">进入工作台</a>
-            <a class="button secondary" href="#quickstart">快速接入指南</a>
+            <a class="button secondary" href="#quickstart">查看请求示例</a>
           </div>
         </div>
-
         <figure class="landing-artwork">
-          <img src="/seedance-tram.webp" alt="雨后的坡道上，一辆电车开向暮色中的海岸城镇" width="1279" height="720" fetchpriority="high" />
-          <figcaption><strong>提示词示例</strong><span>雨后蓝调时刻，镜头跟随一辆电车驶过海滨街道。</span></figcaption>
+          <img src="/coastal-tram.webp" alt="一辆亮着灯的电车驶过雨后的海滨坡道" width="1279" height="720" fetchpriority="high" />
+          <figcaption><strong>文生图提示词</strong><span>蓝调时刻的海滨小镇，雨后的石板街上有一辆亮着灯的电车。</span></figcaption>
         </figure>
       </section>
 
       <section class="landing-section" id="quickstart" aria-labelledby="quickstart-title">
         <div class="landing-section-head">
-          <div><h2 id="quickstart-title">从 Key 到生成结果</h2></div>
+          <div><h2 id="quickstart-title">从 API Key 开始</h2></div>
         </div>
         <div class="landing-workflow">
           <ol class="landing-steps" role="list">
             <li>
-              <h3>创建 API Key</h3>
-              <p>在<a href="/console/">工作台</a>创建并保存业务 Key，再记下请求示例下方的 API 地址。</p>
+              <h3>创建项目 API Key</h3>
+              <p>在<a href="/console/#api">工作台</a>创建并保存业务 Key。</p>
             </li>
             <li>
-              <h3>发起请求</h3>
-              <p>在终端、API 客户端或应用中使用业务 Key，先请求 <code>GET /v1/models</code>，再选择模型提交视频任务。<a href="/docs/#quickstart">查看接入示例</a>。</p>
+              <h3>选择模型</h3>
+              <p>发送 <code>GET /v1/models</code>，从项目可用的模型中选择 ID。</p>
             </li>
             <li>
-              <h3>查询并下载</h3>
-              <p>使用原 Key 和任务 ID <a href="/docs/#tasks">查询状态</a>，并在结果链接有效期内下载视频。</p>
+              <h3>发起调用</h3>
+              <p>调用文本或图片接口，读取返回的文本和图片地址。<a href="/docs/#quickstart">查看接入指南</a></p>
             </li>
           </ol>
           <section class="landing-terminal" aria-labelledby="example-title">
@@ -71,34 +70,35 @@
               <button class="terminal-copy" type="button" hidden>复制命令</button>
             </div>
             <div class="terminal-tabs" role="tablist" aria-label="请求类型" hidden>
-              <button id="tab-create" type="button" role="tab" aria-controls="example-create" aria-selected="true">创建视频</button>
+              <button id="tab-chat" type="button" role="tab" aria-controls="example-chat" aria-selected="true">文本对话</button>
+              <button id="tab-image" type="button" role="tab" aria-controls="example-image" aria-selected="false" tabindex="-1">图片生成</button>
               <button id="tab-models" type="button" role="tab" aria-controls="example-models" aria-selected="false" tabindex="-1">列出模型</button>
-              <button id="tab-query" type="button" role="tab" aria-controls="example-query" aria-selected="false" tabindex="-1">查询任务</button>
             </div>
             <div class="terminal-examples">
-              <div id="example-create" class="terminal-example">
-                <h4>创建视频</h4>
-                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks" \
+              <div id="example-chat" class="terminal-example">
+                <h4>文本对话</h4>
+                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/v1/chat/completions" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "doubao-seed-2.1-lite",
+    "messages": [{"role": "user", "content": "写一句海滨小镇的旅行推荐"}]
+  }'</code></pre>
+              </div>
+              <div id="example-image" class="terminal-example">
+                <h4>图片生成</h4>
+                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/v1/images/generations" \
   -H "Authorization: Bearer $API_KEY" \
   -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $REQUEST_ID" \
   -d '{
-    "model": "doubao-seedance-2.5",
-    "content": [{
-      "type": "text",
-      "text": "雨后蓝调时刻，镜头跟随一辆电车驶过海滨街道。"
-    }],
-    "duration": 5
+    "model": "doubao-seedream-5.5",
+    "prompt": "蓝调时刻雨后的海滨小镇，石板街上有一辆红色电车"
   }'</code></pre>
               </div>
               <div id="example-models" class="terminal-example">
                 <h4>列出模型</h4>
                 <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/v1/models" \
-  -H "Authorization: Bearer $API_KEY"</code></pre>
-              </div>
-              <div id="example-query" class="terminal-example">
-                <h4>查询任务</h4>
-                <pre tabindex="0"><code><span class="terminal-command">curl</span> "$BASE_URL/api/v3/contents/generations/tasks/$TASK_ID" \
   -H "Authorization: Bearer $API_KEY"</code></pre>
               </div>
             </div>
@@ -112,35 +112,17 @@
 
       <section class="landing-section" id="models" aria-labelledby="models-title">
         <div class="landing-section-head">
-          <div><h2 id="models-title">Seedance 模型规格</h2><p>按输出分辨率和视频时长选择模型。</p></div>
-          <a class="button secondary" href="/docs/#models">完整规格</a>
+          <div><h2 id="models-title">支持的模型</h2></div>
+          <a class="button secondary" href="/docs/#models">查看模型与接口</a>
         </div>
-        <div class="landing-models" role="region" aria-label="Seedance 模型规格对照表" tabindex="0">
+        <div class="landing-models" role="region" aria-label="支持的模型对照表" tabindex="0">
           <table>
-            <thead>
-              <tr><th scope="col">模型</th><th scope="col">可选分辨率</th><th scope="col">时长</th></tr>
-            </thead>
+            <thead><tr><th scope="col">模型</th><th scope="col">类型</th><th scope="col">用途</th></tr></thead>
             <tbody>
-              <tr>
-                <th scope="row"><strong>Seedance 2.5</strong><code>doubao-seedance-2.5</code></th>
-                <td>480p、720p、1080p、<b class="model-4k">4K</b></td><td>4–30 秒</td>
-              </tr>
-              <tr>
-                <th scope="row"><strong>Seedance 2.5 Flash</strong><code>doubao-seedance-2.5-flash</code></th>
-                <td>480p、720p</td><td>4–30 秒</td>
-              </tr>
-              <tr>
-                <th scope="row"><strong>Seedance 2.0</strong><code>doubao-seedance-2.0</code></th>
-                <td>480p、720p、1080p、<b class="model-4k">4K</b></td><td>4–15 秒</td>
-              </tr>
-              <tr>
-                <th scope="row"><strong>Seedance 2.0 Fast</strong><code>doubao-seedance-2.0-fast</code></th>
-                <td>480p、720p</td><td>4–15 秒</td>
-              </tr>
-              <tr>
-                <th scope="row"><strong>Seedance 2.0 Mini</strong><code>doubao-seedance-2.0-mini</code></th>
-                <td>480p、720p</td><td>4–15 秒</td>
-              </tr>
+              <tr><th scope="row"><strong>豆包 Seed 2.1 Lite</strong><code>doubao-seed-2.1-lite</code></th><td>文本</td><td>日常对话、写作与摘要</td></tr>
+              <tr><th scope="row"><strong>豆包 Seed 2.1 Pro</strong><code>doubao-seed-2.1-pro</code></th><td>文本</td><td>复杂文本任务和代码</td></tr>
+              <tr><th scope="row"><strong>豆包 Seedream 5.5</strong><code>doubao-seedream-5.5</code></th><td>图片</td><td>文生图、参考图生成</td></tr>
+              <tr><th scope="row"><strong>豆包 Seedream 5.0 Pro</strong><code>doubao-seedream-5.0-pro</code></th><td>图片</td><td>文生图、参考图生成</td></tr>
             </tbody>
           </table>
         </div>
@@ -150,18 +132,18 @@
         <div class="landing-section-head"><h2 id="faq-title">接入常见问题</h2></div>
         <div>
           <details>
-            <summary>在哪里查看调用记录？</summary>
-            <p>通过「任务记录」查看项目任务。打开「用量与账单」可以按月查看任务状态和返回的输出 Token。</p>
+            <summary>如何使用参考图生成图片？</summary>
+            <p>在图片生成请求的 <code>image</code> 字段传入公网 HTTPS 地址。在<a href="/docs/#images">图片生成文档</a>查看参数。</p>
           </details>
           <details>
-            <summary>怎样添加参考素材？</summary>
-            <p>可以上传本地文件或登记公网 HTTPS 链接。素材状态变为 <code>Active</code> 后，将接口返回的 <code>asset://</code> 引用传入生成请求。<a href="/docs/#assets">查看上传与登记步骤</a>。</p>
+            <summary>在哪里查看调用用量？</summary>
+            <p>登录工作台，在「用量与账单」按月查看项目的文本和图片调用记录。</p>
           </details>
         </div>
       </section>
     </main>
     <footer class="landing-footer page-width">
-      <span>richproxy</span><div><a href="/docs/">开发文档</a><a href="/console/">客户工作台</a></div>
+      <span>Richi 火山模型</span><div><a href="/docs/">开发文档</a><a href="/console/">客户工作台</a></div>
     </footer>
   </body>
 </html>

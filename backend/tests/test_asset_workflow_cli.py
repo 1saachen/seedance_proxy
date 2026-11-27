@@ -23,6 +23,7 @@ from app import billing
 from app.accounts import SESSION_COOKIE
 from app.config import Settings
 from app.main import create_app
+from app.model_access import set_seedance_access
 from app.model_api import TASKS_PATH
 
 
@@ -245,6 +246,8 @@ def test_cli_asset_video_and_billing_acceptance_over_loopback(tmp_path: Path) ->
     with _serve(app) as origin, httpx.Client(base_url=origin, trust_env=False, timeout=5) as client:
         owner, other = _customer(client, "alice"), _customer(client, "bob")
         with app.state.db.connect() as connection:
+            set_seedance_access(connection, owner.project_id, True)
+            set_seedance_access(connection, other.project_id, True)
             # Anchor the genuine API-created task to a closed month without inserting a charge or statement fixture.
             connection.execute("""
                 CREATE TRIGGER synthetic_past_task AFTER INSERT ON video_tasks
